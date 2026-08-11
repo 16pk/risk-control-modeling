@@ -1,0 +1,66 @@
+{
+  "name": "risk-control-modeling",
+  "version": "1.4.0",
+  "description": "Interactive end-to-end credit risk modeling expert: data exploration, feature engineering (IV/PSI/WOE), tree-model development & tuning (XGBoost/LightGBM), evaluation (AUC/KS/PSI), and scorecards on demand — with key decisions confirmed by the user, extensible via MCP connectors & skills.",
+  "agents": ["./agents/risk-control-modeling.md"],
+  "skills": [
+    "./model-skills/model-task-routing",
+    "./model-skills/model-knowledge",
+    "./model-skills/feature-matching",
+    "./model-skills/feature-analysis",
+    "./model-skills/credit-data-analysis",
+    "./model-skills/classification-model-orchestration",
+    "./model-skills/classification-model-task-spec",
+    "./model-skills/classification-model-recommend",
+    "./model-skills/classification-model-development",
+    "./model-skills/classification-model-training",
+    "./model-skills/classification-model-tuning",
+    "./model-skills/classification-model-evaluation",
+    "./model-skills/classification-model-comparison",
+    "./model-skills/classification-model-report",
+    "./model-skills/credit-model-report",
+    "./model-skills/score-to-fico",
+    "./model-skills/uplift-model-task-spec",
+    "./model-skills/uplift-model-sample-preparation",
+    "./model-skills/uplift-model-sample-homogeneity-check",
+    "./model-skills/uplift-model-feature-quality-analysis",
+    "./model-skills/uplift-model-s-learner-modeling",
+    "./model-skills/uplift-model-t-learner-modeling",
+    "./model-skills/uplift-model-tuning",
+    "./model-skills/uplift-model-result-comparison",
+    "./model-skills/uplift-model-reporting"
+  ],
+
+  "expertType": "agent",
+  "agentName": "risk-control-modeling",
+
+  "displayName": {
+    "en": "Credit Risk Modeling Expert",
+    "zh": "信贷风控建模专家"
+  },
+  "profession": {
+    "en": "Credit Risk Modeling Expert",
+    "zh": "信贷风控建模专家"
+  },
+  "displayDescription": {
+    "en": "End-to-end credit risk modeling: data exploration, feature selection, tree-model development & tuning, and evaluation — interactive confirmation at key steps, deployment-ready models.",
+    "zh": "专注信贷风控建模全流程：数据探索、特征筛选、树模型开发调优与评估，关键环节交互确认，产出可上线模型。"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "08-FinanceInvestment",
+  "defaultInitPrompt": {
+    "zh": "帮我基于这份信贷数据构建风控模型，数据、目标与关键方案请先确认再执行",
+    "en": "Build a credit risk model from this dataset — confirm data, target and key decisions before executing"
+  },
+  "plugin": "risk-control-modeling",
+  "tags": [
+    { "en": "Credit Risk Modeling", "zh": "信贷风控建模" },
+    { "en": "Feature Engineering & Selection", "zh": "特征工程与筛选" },
+    { "en": "Model Development & Evaluation", "zh": "模型开发与评估" }
+  ],
+  "quickPrompts": [
+    { "en": "Build a credit risk model from this dataset — confirm data, target and key decisions before executing", "zh": "帮我基于这份信贷数据构建风控模型，数据、目标与关键方案请先确认再执行" },
+    { "en": "Run data exploration and feature selection, and confirm the filtering plan before modeling", "zh": "先做数据探索和特征筛选，把筛选方案给我确认后再建模" },
+    { "en": "Train and tune a tree model — confirm hyperparameters and the train/test/OOT window split first", "zh": "训练并调优一个树模型，超参数和训练窗口划分先给我确认" }
+  ]
+}

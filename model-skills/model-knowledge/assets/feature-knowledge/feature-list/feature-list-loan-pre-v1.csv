@@ -1,0 +1,6 @@
+﻿table_name,feature_category,scene
+lx_dwd.dwd_xin_all_nifa_report_di,互金,贷前
+lx_dwd.dwd_xin_all_td_loan_guard_di,同盾,贷前
+lx_dwd.dwd_xin_all_br_loan_allterm_di,百融,贷前
+dp_fkqt_mart.bh_dz_fraud_di,百行洞侦,贷前
+dp_ods.xin_db_t_mobile_online_water,在网时长,贷前
