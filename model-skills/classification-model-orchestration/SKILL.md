@@ -61,7 +61,7 @@ description: 分类建模流程编排（覆盖营销/增长/获客/运营/风控
 
 调用 `classification-model-task-spec`，**跳过其问题类型判定**（上游已判定），将 routing_input JSON 透传，`mode=local_file`。task-spec 自身的 `fetch_sample_task_spec.py --mode local_file` 拉本地样本，`run_sample_analysis_task_spec.py` 做切分+分析。所有需求维度（WHO/WHAT/HOW GOOD/CONSTRAINTS/SAMPLE）及切分方式均须向用户逐一澄清，不得用默认值替代。
 
-**完成标准**：需求成熟度 A 或 B 级，且样本分析通过。
+**完成标准**：样本分析通过。
 
 **出口校验（强制）**：
 
@@ -232,18 +232,13 @@ runs/{timestamp}-{model_name}/
 
 本地文件模式下 `model-recommend/` 目录本就不创建（recommend 整步跳过），进度推断时不得将"该目录为空/缺失"误判为"recommend 待跑"。
 
-### 7.3 需求成熟度 C 级
-
-task-spec 输出 C 级（需先探查）→ 暂停流程，不创建任务目录，不进入后续步骤，等待用户补充信息。
-
-### 7.4 子目录文件缺失
+### 7.3 子目录文件缺失
 
 某子目录存在但缺少应有文件 → 提示用户"该阶段半途中断，需补齐 {缺失文件清单} 后再继续"。不得因目录存在就跳过对应阶段。
 
-### 7.5 结束条件
+### 7.4 结束条件
 
 > 回归/多分类等非二分类场景由上游 `model-task-routing` 的 Q1 判定拦截（见 model-task-routing 7.1）；路由路径下 task-spec 第零步跳过，本 skill 不处理非二分类拒绝场景。
 
-1. **需求成熟度 C 级** → 暂停
-2. **建模决策用户选"否"** → 正常结束，产出物保留
-3. **classification-model-development 执行完毕** → 正常结束，report.md 完整
+1. **建模决策用户选"否"** → 正常结束，产出物保留
+2. **classification-model-development 执行完毕** → 正常结束，report.md 完整

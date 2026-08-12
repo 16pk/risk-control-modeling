@@ -445,8 +445,6 @@ def build_sheet1_overview(wb: Workbook, session_dir: Path) -> None:
         ("▌ 基础信息", [
             ("模型简称 (model_name)", ts_manifest.get("model_name", "—")),
             ("session 时间戳", ts_manifest.get("timestamp", "—")),
-            ("需求成熟度", ts_manifest.get("maturity", "—")),
-            ("成熟度说明", ts_manifest.get("maturity_note", "—")),
             ("产出方", ts_manifest.get("produced_by", "—")),
         ]),
         ("▌ 路由溯源 (来自 model-task-routing)", [
