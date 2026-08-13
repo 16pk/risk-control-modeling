@@ -126,6 +126,21 @@ python <skill_dir>/scripts/select_features.py \
 5. **重训**：用 baseline 的 `used_params`（不调参） + 筛选后的特征集训练，落八阶段产物
 6. `config.json.runtime` 含 `baseline_run / selection {kept/dropped/dropped_by_rule/thresholds/rules_enabled} / analysis_dir / final_params / baseline_metrics`
 
+### 2.3 脚本快照记录(强制)
+
+`run_tuning.py`(流程 A)与 `select_features.py`(流程 B)执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/tuning/`(集中清单 `<session_dir>/scripts/_manifest.json`):
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage tuning \
+    --script <skill_dir>/scripts/<run_tuning.py|select_features.py> \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "超参调优/特征筛选"]
+```
+
+`--cmd` 传实际执行的那条命令原样(建议 shell 单引号包裹);同一 stage 的多次执行(如 `rule` / `optuna` 或不同 `--version` 迭代)用 `--label` 区分。LightGBM 自定义路径(`optuna_tune_lgb_template.py`)同此记录。
+
 ## 3. 参数说明
 
 ### 3.1 run_tuning.py

@@ -34,9 +34,9 @@
 
 | 列名 | 含义 | 类型 |
 |------|------|------|
-| user_no | 用户唯一标识 | string |
+| fuid | 用户唯一标识 | string |
 | label | 正负样本标记（0/1） | int |
-| pday | 样本观察日期（yyyyMMdd） | string |
+| f_p_date | 样本观察日期（默认 YYYY-MM-DD，兼容 8 位 YYYYMMDD） | string |
 
 **数据文件**: `runs/{timestamp}-{model_name}/data-profile/{model_name}_sample_{YYYYMMDD}.parquet`
 
@@ -46,19 +46,19 @@
 |------|-----|
 | 总样本量 | |
 | 正样本率 | |
-| pday 范围 | |
+| {f_p_date} 范围 | |
 | 标签稳定性 | 正样本率波动幅度 = Xpp ({稳定/轻微波动/显著波动}) |
 | 样本充足度 | {充足/基本可用/不足} |
 
 ### Train/Test/OOT 切分
 
-| 集合 | 样本量 | 正样本率 | pday 范围 |
+| 集合 | 样本量 | 正样本率 | {f_p_date} 范围 |
 |------|--------|----------|-----------|
 | Train | | | |
 | Test | | | |
 | OOT | | | |
 
-> 切分方式：按 pday 时间顺序。
+> 切分方式：按日期时间顺序。
 > 详细报告见 `data-profile/report.md` 和 `data-profile/report.xlsx`
 
 ## 四、待处理项

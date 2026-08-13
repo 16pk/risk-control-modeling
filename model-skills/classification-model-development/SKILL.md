@@ -104,6 +104,37 @@ Stage 5: FICO 转换 (score-to-fico, 收口后**总是询问**)
 
 **回填机制**: `fill_report.py` 是幂等的 — 同一段落多次调用结果一致,用 H2 锚点(`## 四、` 等)切分替换。Stage 2 每次新 run 后调 `--section VI` 会重新扫 `new-models/*/config.json` 重建整张表,不会重复 append。
 
+### 4.1 脚本快照记录(强制,每阶段 CLI 执行后必跑)
+
+每个阶段的接力 CLI 执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/<stage>/`(集中清单 `<session_dir>/scripts/_manifest.json`),保证结果可复现、可追溯 —— 即使 skill 代码后续演进,也能还原当时跑的代码与调用方式。
+
+统一命令模板:
+```bash
+python model-skills/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage <stage> \
+    --script <被执行的入口脚本绝对路径> \
+    --cmd "<实际执行的完整命令行(含全部参数)>" \
+    [--label "<阶段说明>"]
+```
+
+**阶段 → stage 名 → 记录对象** 映射(与 §4 接力 CLI 一一对应):
+
+| 阶段 | 接力 CLI(入口脚本) | stage 名 | 建议 label |
+|------|--------------------|----------|-----------|
+| Stage 0 | `feature-analysis/scripts/run_analysis.py` | `feature-analysis` | 特征分析 |
+| Stage 1 / 2c | `classification-model-training/scripts/run_build.py` | `training` | baseline 训练 / 换算法重训 |
+| Stage 2a | `classification-model-tuning/scripts/select_features.py` | `tuning` | 特征筛选 |
+| Stage 2b | `classification-model-tuning/scripts/run_tuning.py` | `tuning` | 超参调优 |
+| Stage 3(手动跑时) | `classification-model-comparison/scripts/aggregate_session_comparison.py` | `comparison` | 横向对比 |
+| Stage 5 | `score-to-fico/scripts/score_to_fico.py` | `fico` | FICO 转分 |
+
+说明:
+- `--cmd` 传**实际执行的那条命令原样**(含全部参数,建议 shell 单引号包裹);`--label` 帮助区分同一 stage 的多次记录(如 `-feat` / `-tuned` 迭代)。
+- Stage 3 通常由 `run_build.py` 末尾自动触发(无需单独记录);仅**手动**跑 `aggregate_session_comparison.py` 时记录。
+- 同阶段执行的回填 CLI(`fill_report.py`)也建议一并记录(`--stage fill_report --script .../fill_report.py`),完整还原当时调用。
+- `record_stage.py` 位于 `model-skills/_modelevo-shared/scripts/`,仅依赖标准库。参数/脚本路径错误会报错退出(需修正后重跑);落盘 IO 失败仅打印 warning,不阻断建模。
+
 ## 5. 决策点话术(强制,每个阶段后必问)
 
 > **决策点必问**: 每个 Stage 完成后都向用户询问下一步(Stage 0~4 决策点 + Stage 5 FICO 转换),不自动推进;下方话术在每个阶段后触发。
@@ -215,6 +246,7 @@ Stage 2c 换算法时:
   - `sample-features/splits/`(本 skill Stage 0 产)
   - `new-models/`(Stage 1 + Stage 2 产; Stage 5 FICO 转换产物 `{run}/fico/` 也在其中)
   - `model-comparison/`(Stage 3 产)
+  - `scripts/`(本 skill 各阶段经 4.1 节 `record_stage.py` 记录的「执行命令 + 脚本源码快照」)
   - `report.md`(全段填充 — 四由 orchestration 回填, 五/六/七由本 skill 回填, 附录「待处理项」由 Stage 4 上线候选 + Stage 5 FICO 结果填写)
 - **结束条件**: 用户在 Stage 4 选"停" 或 所有决策点选"停",且 Stage 5 FICO 询问完成(是→转分完成; 否→明确跳过)
 

@@ -26,7 +26,7 @@
 
 - `model.name` / `sample_table` / `dt_col` / `fetch_dt` 非空
 - `label_col` 与 `label_expr` 至少一个
-- `fetch_dt` 为 `[起,止]` 两元素、8 位 `YYYYMMDD`
+- `fetch_dt` 为 `[起,止]` 两元素、默认 `YYYY-MM-DD`(兼容 8 位 `YYYYMMDD`)
 - `hdfs_base` 必填(spark 模式)
 
 ## 5. 数据安全红线(全模式强制,`check_sensitive`)
@@ -41,11 +41,11 @@
 > 规则由 `_modelevo-shared/config_io.validate_model_join_keys` → `fetch_spark.validate_join_keys`
 > 单一实现强校验,违反一律 **raise ValueError 硬拦截**,不在运行期静默放行。
 
-- 样本表⋈特征表(模型分表)JOIN key **必须 = [ID 类键 + 日期分区列]**:如 `[user_no/fuid, pday]`。
+- 样本表⋈特征表(模型分表)JOIN key **必须 = [ID 类键 + 日期分区列]**:如 `[fuid, f_p_date]`。
 - 同一用户在多个日期各有快照;仅按单 ID 联接会把不同日期的标签/特征跨日错配,造成泄漏/口径错误。
-- 缺省补齐:`--join-keys` 未传时用 `id_cols[0](≈fuid) + dt-col`;
-  显式传 `--join-keys user_no,pday,f_p_date` 等同样强校验必含 ID + 日期。
-- 容错约定:表中日期列实际名为 `f_p_date` / `fsx_time` 时必须把该列显式传作 `dt-col`
+- 缺省补齐:`--join-keys` 未传时用 `id_cols[0] + dt-col`;
+  显式传 `--join-keys fuid,f_p_date` 等同样强校验必含 ID + 日期。
+- 容错约定:表中日期列实际名为 `pday` / `fsx_time` 时必须把该列显式传作 `dt-col`
   (或放进 `join_keys`),本链路不做隐式猜列名。
 
 ## 6. 变更前置流程(强制遵循 CLAUDE.md)

@@ -41,8 +41,8 @@ _SENSITIVE_PATTERNS = [
 ]
 
 # 样本集 JOIN 红线配置项(供各 skill 解析): model.join_keys 缺省时按 [ID列, 日期分区列] 补齐。
-JOIN_ID_COL_DEFAULT = "user_no"        # 默认用户粒度 ID 列(= fuid); user_no ≈ fuid
-JOIN_DATE_COL_FALLBACKS = ["pday", "f_p_date"]   # 日期分区列的候选名(f_p_date 为特征宽表通用分区列)
+JOIN_ID_COL_DEFAULT = "fuid"        # 默认用户粒度 ID 列
+JOIN_DATE_COL_FALLBACKS = ["f_p_date", "pday"]   # 日期分区列的候选名(f_p_date 为特征宽表通用分区列, pday 为历史兼容)
 
 
 def _load_feature_list(fpath: str) -> list:
@@ -187,7 +187,7 @@ def resolve_join_keys(model: dict) -> list:
         if keys:
             return keys
     id_default = (model.get("id_cols") or [JOIN_ID_COL_DEFAULT])[0]
-    return [str(id_default), str(model.get("dt_col", "pday"))]
+    return [str(id_default), str(model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0]))]
 
 
 def validate_model_join_keys(model: dict) -> list:
@@ -211,38 +211,26 @@ def validate_model_join_keys(model: dict) -> list:
         return []
     from fetch_spark import validate_join_keys as _vjk
 
-    _vjk(resolved, model.get("dt_col", "pday"))
+    _vjk(resolved, model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0]))
     return resolved
 
 
 def _parse_range_pair(name: str, value) -> tuple:
-    """把单档区间值规整成 (起, 止) 并校验 8 位 YYYYMMDD、起 ≤ 止。
+    """把单档区间值规整成 (起, 止) 并校验日期格式(YYYY-MM-DD / YYYYMMDD 双兼容)、起 ≤ 止。
 
     Args:
         name: 档名(train/test/oot), 仅用于报错信息
-        value: 形如 ["20260312", "20260430"] 或 "20260312,20260430"
+        value: 形如 ["2026-03-12", "2026-04-30"] 或 "2026-03-12,20260430"
 
     Returns:
-        (start, end) 两个 8 位日期字符串
+        (start, end) 两个归一化 8 位日期字符串
 
     Raises:
-        ValueError: 非两元素 / 非 8 位数字 / 起 > 止
+        ValueError: 非两元素 / 日期不合法 / 起 > 止
     """
-    if isinstance(value, str):
-        parts = [p.strip() for p in value.split(",") if p.strip()]
-    elif isinstance(value, (list, tuple)):
-        parts = [str(p).strip() for p in value]
-    else:
-        raise ValueError("split.%s_range 须为 [起, 止] 列表或 '起,止' 字符串" % name)
-    if len(parts) != 2:
-        raise ValueError("split.%s_range 须为两元素 [起, 止], 当前 %r" % (name, value))
-    start, end = parts
-    for d in (start, end):
-        if not (d.isdigit() and len(d) == 8):
-            raise ValueError("split.%s_range 日期须为 8 位 YYYYMMDD, 当前 %r" % (name, d))
-    if start > end:
-        raise ValueError("split.%s_range 起始 %s 不应大于结束 %s" % (name, start, end))
-    return start, end
+    from date_utils import parse_date_pair
+
+    return parse_date_pair(value, what="split.%s_range" % name)
 
 
 def validate_split_ranges(model: dict) -> None:
@@ -250,7 +238,7 @@ def validate_split_ranges(model: dict) -> None:
 
     仅当 model.split 存在时触发。约束(间隔逻辑):
       1. 三档齐全(train_range/test_range/oot_range 缺一报错)
-      2. 每档 [起, 止] 为 8 位 YYYYMMDD 且起 ≤ 止
+      2. 每档 [起, 止] 为合法日期(YYYY-MM-DD / YYYYMMDD 双兼容)且起 ≤ 止
       3. 三档时序递增(train ≤ test ≤ oot), 允许相邻(前档结束日次日后档开始日),
          仅真正重叠或逆序才报错
       4. 三档并集 ⊆ model.fetch_dt(划分范围不得超出取数窗口);
@@ -284,12 +272,16 @@ def validate_split_ranges(model: dict) -> None:
 
     fetch_dt = model.get("fetch_dt")
     if isinstance(fetch_dt, list) and len(fetch_dt) == 2:
-        f_start, f_end = str(fetch_dt[0]), str(fetch_dt[1])
         union_start = ranges["train"][0]
         union_end = ranges["oot"][1]
         # local_file 模式不强制 fetch_dt(本地 parquet 无取数窗口概念);
         # fetch_dt 为空字符串或占位时跳过本条校验
-        if f_start and f_end and f_start.isdigit() and f_end.isdigit():
+        f_vals = [str(v).strip() for v in fetch_dt if str(v).strip()]
+        if len(f_vals) == 2:
+            from date_utils import parse_date
+
+            f_start = parse_date(f_vals[0], what="fetch_dt.start")
+            f_end = parse_date(f_vals[1], what="fetch_dt.end")
             if union_start < f_start or union_end > f_end:
                 raise ValueError(
                     "train/test/oot 划分并集 [%s,%s] 超出取数窗口 fetch_dt [%s,%s]"

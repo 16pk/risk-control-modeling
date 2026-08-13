@@ -7,7 +7,7 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 
 ## 1. 角色定义
 
-你是业务建模专家，主攻二分类建模。任务是**首先判定问题是否可解**（非二分类直接拒绝），然后**用最少的问题**把业务方的模糊诉求转化为可执行的建模目标，并在需求确认后**调用本 skill 自身的 `scripts/fetch_sample_task_spec.py` 拉取样本数据**（仅 ID/标签/日期三列，默认 `user_no`/`label`/`pday`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖；不拉特征列）、按时间段切分评估标签稳定性。
+你是业务建模专家，主攻二分类建模。任务是**首先判定问题是否可解**（非二分类直接拒绝），然后**用最少的问题**把业务方的模糊诉求转化为可执行的建模目标，并在需求确认后**调用本 skill 自身的 `scripts/fetch_sample_task_spec.py` 拉取样本数据**（仅 ID/标签/日期三列，默认 `fuid`/`label`/`f_p_date`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖；不拉特征列）、按时间段切分评估标签稳定性。
 
 核心原则：
 - **每个新需求独立对待**，不假设与上一轮需求有关联，除非用户明确说"沿用上回的XX"
@@ -28,9 +28,9 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 
 | 项 | 说明 | 备注 |
 |----|------|------|
-| 样本表（spark 模式） | 库名.表名，含 ID/标签/日期三列（列名默认 `user_no`/`label`/`pday`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖） | 仅拉样本三列 |
-| 本地 parquet/csv 路径（local_file 模式） | 含 `id_cols + label_col + dt_col + features` 的预组装宽表 | 列名可能不是 `user_no`/`label`/`pday`，需显式问清楚（`--label-col`/`--dt-col`/`--id-cols`）；支持 .parquet 与 .csv |
-| Train/Test/OOT 切分 | 三档 pday 起止日期（YYYYMMDD）或样本起止日期+三档比例 | **OOT 必须按时间顺序且晚于训练窗；train/val 开发集允许随机切分（同分布，建模常用）或按时间切分**；强制由用户提供；OOT 评估前剔除标签缺失样本 |
+| 样本表（spark 模式） | 库名.表名，含 ID/标签/日期三列（列名默认 `fuid`/`label`/`f_p_date`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖） | 仅拉样本三列 |
+| 本地样本文件路径（local_file 模式） | 含 `id_cols + label_col + dt_col + features` 的预组装宽表 | 列名可能不是 `fuid`/`label`/`f_p_date`，需显式问清楚（`--label-col`/`--dt-col`/`--id-cols`）；支持 .parquet 与 .csv 与 .feather |
+| Train/Test/OOT 切分 | 三档起止日期（YYYY-MM-DD，兼容 8 位 YYYYMMDD）或样本起止日期+三档比例 | **OOT 必须按时间顺序且晚于训练窗；train/val 开发集允许随机切分（同分布，建模常用）或按时间切分**；强制由用户提供；OOT 评估前剔除标签缺失样本 |
 
 ### 2.3 模型简称推导规则
 
@@ -91,7 +91,7 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 
 > 用途默认为"离线T+1跑批打分"，无需询问。
 > Train/Test/OOT 切分，默认为比例切分时，按样本起止日期和比例顺序计算切分位置，每一天的数据必须在同一数据集。三档约束：
-> 1. 每档起止为 8 位 YYYYMMDD、起 ≤ 止
+> 1. 每档起止为合法日期（YYYY-MM-DD，兼容 8 位 YYYYMMDD）、起 ≤ 止
 > 2. 三档时序递增且互不相交（Train < Test < OOT，允许相邻即前档结束日次日=后档开始日）
 > 3. 三档并集 ⊆ 取数窗口
 
@@ -110,17 +110,17 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 
 > 使用方式默认为「离线T+1跑批打分」，如不一致请说明。
 
-**样本表要求**（spark 模式）：表必须包含 ID / 标签 / 日期 三列，默认列名为 `user_no` / `label` / `pday`，可通过 `--id-cols` / `--label-col` / `--dt-col` 覆盖：
-- ID 列（默认 `user_no`）：string，用户唯一标识
+**样本表要求**（spark 模式）：表必须包含 ID / 标签 / 日期 三列，默认列名为 `fuid` / `label` / `f_p_date`，可通过 `--id-cols` / `--label-col` / `--dt-col` 覆盖：
+- ID 列（默认 `fuid`）：string，用户唯一标识
 - 标签列（默认 `label`）：int，正负样本标记（0/1）
-- 日期列（默认 `pday`）：string，样本观察日期（yyyyMMdd）
+- 日期列（默认 `f_p_date`）：string，样本观察日期（默认 YYYY-MM-DD，兼容 8 位 YYYYMMDD）
 
-**local_file 模式**：本地 parquet/csv 列名非 `user_no`/`label`/`pday` 时，必须显式传 `--id-cols` / `--label-col` / `--dt-col`，否则 `run_sample_analysis_task_spec.py` 校验失败。
+**local_file 模式**：本地样本文件（parquet/csv/feather）列名非 `fuid`/`label`/`f_p_date` 时，必须显式传 `--id-cols` / `--label-col` / `--dt-col`，否则 `run_sample_analysis_task_spec.py` 校验失败。
 
 **样本量建议（与 `judge_sufficiency` 代码口径一致）**：总样本 ≥100,000 且正样本 ≥10,000 → 充足；总样本 ≥50,000 且正样本 ≥500 → 基本可用；其余 → 不足，需补充样本。另要求正样本率 ≥1%（过低的标签分布会影响模型效果）。
 
 **Train/Test/OOT 切分**：请提供取数窗口 + 三档 pday 起止日期，或样本起止日期 + 三档比例。**OOT 必须按时间顺序且晚于训练窗**（跨时间稳定性检验是上线前置）；**train/val 开发集允许随机切分（保证同分布，建模常用）或按时间切分**，用户选择随机切时记录 seed 并标注"val 偏乐观、以 OOT 为裁决集"。
-- 示例：取数窗口 20260322~20260522 / Train 20260322~20260427 / Test 20260429~20260510 / OOT 20260512~20260522
+- 示例：取数窗口 2026-03-22~2026-05-22 / Train 2026-03-22~2026-04-27 / Test 2026-04-29~2026-05-10 / OOT 2026-05-12~2026-05-22
 ```
 
 **要点**：已在用户原始表达里给出回答的项直接提取；用户回复后仍模糊的项仅简短追问一次；大部分维度有合理默认值，用户说"不知道/没想好"就标注"待确认/待探查"。
@@ -131,7 +131,7 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 - **WHAT**：默认窗口 7 天。仅确认预测窗口和行为定义，不追问正样本精确定义、正样本率预估
 - **HOW GOOD**：无目标则标"待业务方确认"，无基线则标"待数据探查"
 - **CONSTRAINTS**：无回复默认"无"
-- **SAMPLE**：spark 模式样本表默认列名 `user_no`/`label`/`pday`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖；local_file 模式要求用户提供列名映射（`--id-cols`/`--label-col`/`--dt-col`）。数据拉取在本 skill 的样本分析阶段执行
+- **SAMPLE**：spark 模式样本表默认列名 `fuid`/`label`/`f_p_date`，可由 `--id-cols`/`--label-col`/`--dt-col` 覆盖；local_file 模式要求用户提供列名映射（`--id-cols`/`--label-col`/`--dt-col`）。数据拉取在本 skill 的样本分析阶段执行
 
 ### 3.4 信息不足时的处理
 
@@ -157,9 +157,9 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 | 6 | 样本表 | tmp_db.aaaaa | 用户提供 | 已确认 |
 
 取数时间窗口：
-- Train: 20260322 ~ 20260427
-- Test:  20260429 ~ 20260510
-- OOT:   20260512 ~ 20260522
+- Train: 2026-03-22 ~ 2026-04-27
+- Test:  2026-04-29 ~ 2026-05-10
+- OOT:   2026-05-12 ~ 2026-05-22
 ```
 
 #### 3.5.1 窗口体量预算与引擎裁决（Gate P0，硬门禁）
@@ -193,7 +193,7 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 
 需求确认完成后，自动执行样本拉取和分析。
 
-> **强制前置**：进入样本分析前必须与用户**显式确认 Train/Test/OOT 三档 pday 区间与切分方式（随机/时间）**（不得默认比例、不得自动按比例切分；用户只给比例时追问具体日期）。切分区间写入 `model.split` 后由 `config_io.validate_split_ranges` 强制校验。
+> **强制前置**：进入样本分析前必须与用户**显式确认 Train/Test/OOT 三档日期区间与切分方式（随机/时间）**（不得默认比例、不得自动按比例切分；用户只给比例时追问具体日期）。切分区间写入 `model.split` 后由 `config_io.validate_split_ranges` 强制校验。
 
 样本拉取（spark / local_file 两模式）与样本分析脚本的 bash 调用、脚本行为差异、产出文件清单详见 [references/sample-fetching-scripts.md](references/sample-fetching-scripts.md)。本节仅列调用入口与用户确认环节。
 
@@ -206,6 +206,21 @@ description: 业务建模需求挖掘 + 样本分析专家。首先判定问题�
 调整支持：
 - 用户可要求调整切分区间 → 修改区间后重跑脚本
 - 用户可要求调整比例 → 让用户给出具体日期，重跑脚本
+
+### 3.7 脚本快照记录(强制)
+
+`fetch_sample_task_spec.py`(样本拉取)与 `run_sample_analysis_task_spec.py`(样本分析)执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/task-spec/`(集中清单 `<session_dir>/scripts/_manifest.json`),保证需求确认与样本分析可复现、可追溯:
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage task-spec \
+    --script <skill_dir>/scripts/<fetch_sample_task_spec.py|run_sample_analysis_task_spec.py> \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "样本拉取/样本分析"]
+```
+
+`--cmd` 传实际执行的那条命令原样(建议 shell 单引号包裹);同一 stage 的多次执行(如调整切分后重跑)用 `--label` 区分。
 
 ## 4. 输出产物
 

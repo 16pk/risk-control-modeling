@@ -521,6 +521,14 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     splits = split.get("splits", {}) or {}
     null_counts = sample_summary.get("null_counts", {}) or {}
 
+    # 实际列名: 优先从 task-spec 存档的 id_cols / dt_col 解析; 兜底按默认列名(fuid/f_p_date)
+    ts_manifest = _read_json(session_dir / "task-spec" / "_manifest.json") or {}
+    _ts_id_cols = ts_manifest.get("id_cols") or []
+    id_col_label = _ts_id_cols[0] if isinstance(_ts_id_cols, (list, tuple)) and _ts_id_cols else (
+        str(_ts_id_cols).split(",")[0].strip() if isinstance(_ts_id_cols, str) and _ts_id_cols else "fuid"
+    )
+    time_col_label = str(ts_manifest.get("dt_col") or "f_p_date")
+
     # 第一部分: KV 段 (总体样本 + 稳定性 + 充足性 + 切分元信息)
     sections: List[Tuple[str, List[Tuple[str, Any]]]] = [
         ("▌ 总体样本概况", [
@@ -529,14 +537,14 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
             ("负样本数", _to_int(sample_summary.get("negative_samples"))),
             ("正样本率", _to_float(sample_summary.get("positive_rate"))),
             ("正负比", sample_summary.get("positive_negative_ratio", "—")),
-            ("pday 范围", _to_str(sample_summary.get("pday_range"))),
-            ("pday 唯一数", _to_int(sample_summary.get("pday_unique_count"))),
-            ("pday 值列表", _to_str(sample_summary.get("pday_values"))),
+            (f"{time_col_label} 范围", _to_str(sample_summary.get("pday_range"))),
+            (f"{time_col_label} 唯一数", _to_int(sample_summary.get("pday_unique_count"))),
+            (f"{time_col_label} 值列表", _to_str(sample_summary.get("pday_values"))),
             ("用户唯一数", _to_int(sample_summary.get("user_unique"))),
-            ("重复 user_no+pday", _to_int(sample_summary.get("dup_user_pday"))),
-            ("user_no 缺失数", _to_int(null_counts.get("user_no"))),
+            (f"重复 {id_col_label}+{time_col_label}", _to_int(sample_summary.get("dup_user_pday"))),
+            (f"{id_col_label} 缺失数", _to_int(null_counts.get(id_col_label))),
             ("label 缺失数", _to_int(null_counts.get("label"))),
-            ("pday 缺失数", _to_int(null_counts.get("pday"))),
+            (f"{time_col_label} 缺失数", _to_int(null_counts.get(time_col_label))),
         ]),
         ("▌ 稳定性 (跨 pday 正样本率)", [
             ("最高正样本率", _to_float(stability.get("positive_rate_max"))),
@@ -596,7 +604,7 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     cur_row = next_row + 1  # KV 写完后再空 1 行
     n_cols = 5
     # section 标签行
-    ws.cell(row=cur_row, column=1, value="▌ 分时段样本 (按 pday 分组)").font = SECTION_FONT
+    ws.cell(row=cur_row, column=1, value=f"▌ 分时段样本 (按 {time_col_label} 分组)").font = SECTION_FONT
     ws.cell(row=cur_row, column=1).fill = SECTION_FILL
     ws.cell(row=cur_row, column=1).alignment = CENTER
     ws.merge_cells(start_row=cur_row, start_column=1, end_row=cur_row, end_column=n_cols)
@@ -606,7 +614,7 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     cur_row += 1
 
     # 表头
-    seg_headers = ["pday", "样本量", "正样本数", "正样本率", "正负比"]
+    seg_headers = [time_col_label, "样本量", "正样本数", "正样本率", "正负比"]
     for c, h in enumerate(seg_headers, 1):
         cell = ws.cell(row=cur_row, column=c, value=h)
         cell.font = HF

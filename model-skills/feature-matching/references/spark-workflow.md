@@ -12,13 +12,13 @@ python <skill_dir>/scripts/fetch_sample.py \
     --model-name <model_name> \
     --sample-table <db>.<sample_table> \
     [--feature-table <db>.<feature_table>] \
-    [--join-keys user_no,pday] \
-    --fetch-start <YYYYMMDD> --fetch-end <YYYYMMDD> \
+    [--join-keys fuid,f_p_date] \
+    --fetch-start <YYYY-MM-DD> --fetch-end <YYYY-MM-DD> \
     --label-col label \
     [--features f0,f1,f2] \
     [--feature-list-source path/to/feature-list.csv] \
     [--business-domain <business_domain>] \
-    [--id-cols user_no] [--dt-col pday] \
+    [--id-cols fuid] [--dt-col f_p_date] \
     [--where "seg='<your_segment>'"] [--label-expr "(CASE WHEN ... THEN 1 ELSE 0 END)"] \
     [--hdfs-base /user/<whoami>/feature-matching] \
     [--out <session_dir>/sample-features/feature-matching/sample.parquet]
@@ -40,7 +40,7 @@ python <skill_dir>/scripts/fetch_sample.py \
     --model-name <model_name> \
     --sample-table <db>.<sample_table> \
     [--feature-table <db>.<feature_table>] \
-    --fetch-start <YYYYMMDD> --fetch-end <YYYYMMDD> \
+    --fetch-start <YYYY-MM-DD> --fetch-end <YYYY-MM-DD> \
     --label-col label \
     [--features ... | --feature-list-source ... | --no-filter-feas] \
     --submit

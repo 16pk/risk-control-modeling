@@ -15,7 +15,7 @@ description: 从 Spark 现成宽表拉取样本+特征+标签,生成 spark-submi
 | `model_name` | ✅ | 用户输入 / task-spec 文档 | 模型简称,由 task-spec 阶段确认 |
 | 样本表 `sample_table` | spark 模式 ✅ | task-spec 文档 > 其他上游 md > 交互询问 | 库.表;拼接模式下为提供 label + 主键的主表 |
 | 特征表 `feature_table` | 否 | 同上 | 传时启用样本表⋈特征表拼接模式 |
-| 取数窗口 `fetch_dt` | spark 模式 ✅ | 同上 | `[起, 止]` 两元素列表,8 位 `YYYYMMDD` |
+| 取数窗口 `fetch_dt` | spark 模式 ✅ | 同上 | `[起, 止]` 两元素列表,默认 `YYYY-MM-DD`(兼容 8 位 `YYYYMMDD`) |
 | 标签 `label_col` / `label_expr` | ✅(至少一个) | 同上 | `label_expr` 非空时替代 `label_col`(`config_io.validate_common` 校验) |
 | HDFS 中间路径 `hdfs_base` | spark 模式 ✅ | task-spec 文档 > 交互询问,**必须回显确认**(见 `references/interaction-conventions.md`) | 留空会把本地路径误当 HDFS 写 → 权限错误 |
 | 特征清单 | 否 | 三档来源优先级:yaml `features` > `feature_list_source` 文件 > 按 `model-knowledge/assets/feature-knowledge/feature-knowledge.md` 索引自动识别(feature_table 优先/business_domain 兜底) | 单表模式必须指定 `features`;拼接模式可留空=取特征表全部列 |
@@ -27,7 +27,7 @@ description: 从 Spark 现成宽表拉取样本+特征+标签,生成 spark-submi
 |---|---|---|
 | 样本表 | `model.sample_table` | `<db>.<sample_table>` |
 | 特征表 | `model.feature_table` | `<db>.<feature_table>` |
-| join-key | `model.join_keys` | `user_no, pday` |
+| join-key | `model.join_keys` | `fuid, f_p_date` |
 | 特征列 | `model.features` / 留空取全列 | 清单 或 "全部" |
 | label 列 | `model.label_col` | `label` |
 | 取数窗口 | `model.fetch_dt` | `20260312 ~ 20260524` |
@@ -39,10 +39,10 @@ description: 从 Spark 现成宽表拉取样本+特征+标签,生成 spark-submi
 2. **样本表⋈特征表模式**: 额外传 `--feature-table` 时启用。样本表(`--sample-table`,提供 label + 主键)为主,LEFT JOIN 特征表(`--feature-table`,提供特征)。
    - `--features` 留空 + 无 `--feature-list-source` → 取**特征表全部列**(`b.* EXCEPT (join_keys)`)
    - 指定 `--features f0,f1,...` → 只取特征表中这些列
-   - 拼接键 `--join-keys`(默认 `[id_cols[0](≈fuid), dt-col] = user_no,pday`)。
+   - 拼接键 `--join-keys`(默认 `[id_cols[0], dt-col] = fuid,f_p_date`)。
      **样本集 JOIN 红线**:必须含 ID + 日期分区列双键;缺任一即硬报错
-     (`config_io.validate_model_join_keys`,见 RED-LINES)。表中日期列若叫 `f_p_date`
-     等非 pday 名,须把该列传作 `dt-col` / 放进 `join_keys`,不自动猜列名。
+     (`config_io.validate_model_join_keys`,见 RED-LINES)。表中日期列若叫 `pday`
+     等非 f_p_date 名,须把该列传作 `dt-col` / 放进 `join_keys`,不自动猜列名。
 
 ## 2. 执行命令
 
@@ -56,7 +56,7 @@ description: 从 Spark 现成宽表拉取样本+特征+标签,生成 spark-submi
 
 ### 2.2 mode=local_file 模式(本地 parquet/csv/feather,跳过 spark-submit)
 
-> ⚠️ **列名映射必传**：local_file 模式 `--dt-col / --label-col / --id-cols` 默认值为 `pday / label / user_no`，**若本地文件列名不同（如 `fsx_time / dpd30_3c / fuid`）必须显式传这三个参数**，否则落盘 yaml 列名映射错误、下游 feature-analysis 按默认列名找列失败。脚本已加列名存在性校验（列不存在时打 WARN 提示）。支持输入 `.parquet` / `.csv` / `.feather`（feather 自动读后转写）。
+> ⚠️ **列名映射必传**：local_file 模式 `--dt-col / --label-col / --id-cols` 默认值为 `f_p_date / label / fuid`，**若本地文件列名不同（如 `fsx_time / dpd30_3c / user_no`）必须显式传这三个参数**，否则落盘 yaml 列名映射错误、下游 feature-analysis 按默认列名找列失败。脚本已加列名存在性校验（列不存在时打 WARN 提示）。支持输入 `.parquet` / `.csv` / `.feather`（feather 自动读后转写）。
 
 当用户已有预组装好的本地 parquet / csv / feather(含 `id_cols + label_col + dt_col + features`),或上游 `classification-model-orchestration` 在第零步 B 选择"本地样本"透传 `mode=local_file` 标记时,走此分支,**只做"转写为 sample.parquet + 派生 feature-list.csv"两件事,不走 spark-submit**:
 
@@ -82,6 +82,21 @@ python <skill_dir>/scripts/fetch_sample.py \
 - `--local-parquet-path` 接受 `.parquet` / `.csv`,其他扩展名报错终止
 
 **与 spark 模式的产物布局一致**: local_file 模式产出的 `sample.parquet` + `feature-list.csv` 落在 `<session_dir>/sample-features/feature-matching/`,下游 `feature-analysis` / `classification-model-training` 按 `sample-features/feature-matching/` 路径消费即可。
+
+### 2.3 脚本快照记录(强制)
+
+`fetch_sample.py`(spark 两步法 / local_file 转写)执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/feature-matching/`(集中清单 `<session_dir>/scripts/_manifest.json`),保证取数可复现、可追溯:
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage feature-matching \
+    --script <skill_dir>/scripts/fetch_sample.py \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "取数/样本转写"]
+```
+
+`--cmd` 传实际执行的那条命令原样(建议 shell 单引号包裹);spark 两步法(生成 wrapper + `--submit` 提交)可记录各一步,或用 `--label` 区分。
 
 ## 3. 参数说明
 

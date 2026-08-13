@@ -10,13 +10,13 @@
 | `--model-id` | ✅ | - | 模型 ID,用作文件名前缀 |
 | `--sample-table` | ✅ | - | 样本表 库.表,提供 label |
 | `--score-table` | ✅ | - | 模型表 库.表,提供 score;内部映射到 feature_table |
-| `--join-keys` | 否 | `[id_cols[0], dt-col]` = `user_no,pday` | 拼接键(逗号分隔)。**样本集 JOIN 红线:必须含 ID + 日期分区列双键,缺一硬报错**(RED-0102);仅单 ID key 会被拒绝。显式传时同样强校验 |
-| `--fetch-start` / `--fetch-end` | ✅ | - | 取数起止日期 YYYYMMDD(须覆盖 train+test+oot 并集) |
-| `--train-range` / `--test-range` / `--oot-range` | ✅ | - | 三档 pday 闭区间 `起,止`(YYYYMMDD) |
+| `--join-keys` | 否 | `[id_cols[0], dt-col]` = `fuid,f_p_date` | 拼接键(逗号分隔)。**样本集 JOIN 红线:必须含 ID + 日期分区列双键,缺一硬报错**(RED-0102);仅单 ID key 会被拒绝。显式传时同样强校验 |
+| `--fetch-start` / `--fetch-end` | ✅ | - | 取数起止日期 YYYY-MM-DD(兼容 YYYYMMDD)(须覆盖 train+test+oot 并集) |
+| `--train-range` / `--test-range` / `--oot-range` | ✅ | - | 三档日期闭区间 `起,止`(YYYY-MM-DD,兼容 YYYYMMDD) |
 | `--score-col` | 否 | `score` | 模型分列名 |
 | `--label-col` | 否 | `label` | 标签列名 |
-| `--id-cols` | 否 | `user_no` | ID 列(逗号分隔) |
-| `--dt-col` | 否 | `pday` | 日期分区字段(两表须同名) |
+| `--id-cols` | 否 | `fuid` | ID 列(逗号分隔) |
+| `--dt-col` | 否 | `f_p_date` | 日期分区字段(两表须同名) |
 | `--where` | 否 | - | 可选客群筛选条件 |
 | `--version` | 否 | `v1` | 模型版本 |
 | `--hdfs-base` | 否 | `/user/<whoami>/model-recommend` | HDFS 中间目录 |
@@ -32,8 +32,8 @@
 |---|:---:|---|---|
 | `--input` | ✅ | - | sample.parquet 路径 |
 | `--ratios` | 否 | - | 比例模式:`train,test,oot` 如 `0.6,0.2,0.2`(与 `*-range` 互斥) |
-| `--train-range` / `--test-range` / `--oot-range` | 否 | - | 显式模式:各档 pday 闭区间,如 `20260312,20260430` |
-| `--time-col` | 否 | `pday` | 时间切分列 |
+| `--train-range` / `--test-range` / `--oot-range` | 否 | - | 显式模式:各档日期闭区间,如 `2026-03-12,2026-04-30`(兼容 YYYYMMDD) |
+| `--time-col` | 否 | `f_p_date` | 时间切分列 |
 | `--label-col` | 否 | `label` | 标签列(仅用于统计正样本率) |
 | `--output_dir` | 否 | 与 input 同目录 | 输出目录 |
 

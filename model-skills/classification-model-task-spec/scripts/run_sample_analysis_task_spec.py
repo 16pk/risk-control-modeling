@@ -2,23 +2,25 @@
 """样本分析 + 切分一体化脚本。
 
 输入: feature-matching 拉的全量样本 parquet (含 id_col / label_col / time_col 三列及可选补充字段),
-      + 显式 Train/Test/OOT 三档 pday 区间。id_col 默认 user_no, 可由 --id-cols override
+      + 显式 Train/Test/OOT 三档日期区间。id_col 默认 fuid, 可由 --id-cols override
       (分析侧取单列作主 ID, 与 fetch 侧 --id-cols 多列命名对齐)。
+      日期兼容 YYYY-MM-DD 与 8 位 YYYYMMDD 两种格式(内部统一归一化比较)。
 输出: report.md / report.xlsx / _manifest.json / _split_manifest.json /
       train.parquet / test.parquet / oot.parquet, 全部落在 --output-dir。
 
-切分逻辑从 feature-matching/scripts/split_sample.py 复制核心函数, 独立可执行, 不依赖外部 skill。
+切分逻辑从 feature-matching/scripts/split_sample.py 复制核心函数, 独立可执行, 不依赖 feature-matching skill;
+日期归一化复用公共 _modelevo-shared/scripts/date_utils(通过 _bootstrap 注入)。
 
 用法:
     python run_sample_analysis_task_spec.py \
         --sample .../sample.parquet \
-        --train-range 20260401,20260510 \
-        --test-range  20260511,20260520 \
-        --oot-range   20260521,20260530 \
+        --train-range 2026-04-01,2026-05-10 \
+        --test-range  2026-05-11,2026-05-20 \
+        --oot-range   2026-05-21,2026-05-30 \
         --model-name call_complaint \
         --timestamp 20260629-161231 \
         --output-dir .../data-profile/ \
-        [--dt-col pday] [--label-col label] [--id-cols user_no] [--sample-table your_db.xxx]
+        [--dt-col f_p_date] [--label-col label] [--id-cols fuid] [--sample-table your_db.xxx]
 """
 from __future__ import annotations
 
@@ -29,23 +31,23 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Tuple
 
+import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts 供 date_utils 使用
 import pandas as pd
 
 
 # ---------- 区间解析与切分 (复制自 split_sample.py) ----------
 
 def parse_range(text: str) -> Tuple[str, str]:
-    """解析 '起,止' 闭区间 (YYYYMMDD)。"""
+    """解析 '起,止' 闭区间 (YYYY-MM-DD / YYYYMMDD 双兼容, 归一化为 8 位)。"""
+    import date_utils
+
     parts = [p.strip() for p in str(text).split(",") if p.strip()]
     if len(parts) != 2:
-        raise ValueError("区间须为两元素 起,止, 如 20260312,20260430, 当前 %r" % text)
-    start, end = parts
-    for d in (start, end):
-        if not (d.isdigit() and len(d) == 8):
-            raise ValueError("区间日期须为 8 位 YYYYMMDD, 当前 %r" % d)
-    if start > end:
-        raise ValueError("区间起始 %s 不应大于结束 %s" % (start, end))
-    return start, end
+        raise ValueError("区间须为两元素 起,止, 如 2026-03-12,2026-04-30(或 YYYYMMDD), 当前 %r" % text)
+    norm = [date_utils.parse_date(d, what="range") for d in parts]
+    if norm[0] > norm[1]:
+        raise ValueError("区间起始 %s 不应大于结束 %s" % (norm[0], norm[1]))
+    return norm[0], norm[1]
 
 
 def validate_ranges(
@@ -62,8 +64,17 @@ def validate_ranges(
 
 
 def classify_by_ranges(pday, ranges: Dict[str, Tuple[str, str]]):
-    """按显式 pday 区间把单个 pday 归到 train/test/oot, 区间外返回 None。"""
-    p = str(pday)
+    """按显式日期区间把单个日期归到 train/test/oot, 区间外返回 None。
+
+    数据列值可能是 YYYY-MM-DD 或 YYYYMMDD, 统一归一化为 8 位后再与归一化后的区间比较。
+    """
+    import date_utils
+
+    try:
+        p = date_utils.normalize_date(pday)
+    except ValueError:
+        # 数据值不是合法日期(如 None/nan)视为区间外
+        return None
     for name in ("train", "test", "oot"):
         start, end = ranges[name]
         if start <= p <= end:
@@ -103,7 +114,9 @@ def split_dataframe_by_ranges(df, time_col: str, ranges: Dict[str, Tuple[str, st
 # ---------- 输入校验 ----------
 
 def validate_input(df, args) -> None:
-    """校验列存在 / label 取值 / pday 8 位数字。"""
+    """校验列存在 / label 取值 / 日期列格式(YYYY-MM-DD 或 YYYYMMDD 双兼容)。"""
+    import date_utils
+
     for col in (args.dt_col, args.label_col, args._id_col_primary):
         if col not in df.columns:
             raise SystemExit("样本缺必要列: %s" % col)
@@ -112,10 +125,11 @@ def validate_input(df, args) -> None:
     if bad_labels:
         raise SystemExit("label 列存在非法取值 %s, 仅允许 0/1" % bad_labels)
 
-    pday_str = df[args.dt_col].astype(str)
-    bad_pday = sorted(set(pday_str[pday_str.str.len() != 8]) - {"nan"})
-    if bad_pday:
-        raise SystemExit("pday 列存在非 8 位 YYYYMMDD 值: %s" % bad_pday[:5])
+    date_str = df[args.dt_col].astype(str)
+    non_nan = set(date_str[date_str != "nan"])
+    bad_dates = sorted(d for d in non_nan if not date_utils.is_date(d))
+    if bad_dates:
+        raise SystemExit("日期列存在非法值(须为 YYYY-MM-DD 或 8 位 YYYYMMDD): %s" % bad_dates[:5])
 
     ranges = {
         "train": parse_range(args.train_range),
@@ -198,9 +212,13 @@ def segment_by_time(df, args) -> List[dict]:
             })
         return segments
 
-    # pday > 10 时按月聚合
+    # pday > 10 时按月聚合: 数据可能 YYYY-MM-DD 或 YYYYMMDD, 归一化后取前 6 位 YYYYMM
+    import date_utils
+
     df_dt = df.copy()
-    df_dt["_month"] = df_dt[time_col].astype(str).str[:6]
+    df_dt["_month"] = df_dt[time_col].astype(str).map(
+        lambda v: date_utils.month_prefix(v) if date_utils.is_date(v) else v
+    )
     segments = []
     for month in sorted(df_dt["_month"].unique().tolist()):
         sub = df_dt[df_dt["_month"] == month]
@@ -543,17 +561,17 @@ def print_summary(overall, stability, sufficiency, split_stats) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="classification-model-task-spec 样本分析 + 切分一体化")
     parser.add_argument("--sample", required=True, help="feature-matching 拉的全量样本 parquet 路径")
-    parser.add_argument("--train-range", required=True, help="Train pday 闭区间, 如 20260401,20260510")
-    parser.add_argument("--test-range", required=True, help="Test pday 闭区间, 如 20260511,20260520")
-    parser.add_argument("--oot-range", required=True, help="OOT pday 闭区间, 如 20260521,20260530")
+    parser.add_argument("--train-range", required=True, help="Train 日期闭区间, 如 2026-04-01,2026-05-10(兼容 YYYYMMDD)")
+    parser.add_argument("--test-range", required=True, help="Test 日期闭区间, 如 2026-05-11,2026-05-20(兼容 YYYYMMDD)")
+    parser.add_argument("--oot-range", required=True, help="OOT 日期闭区间, 如 2026-05-21,2026-05-30(兼容 YYYYMMDD)")
     parser.add_argument("--model-name", required=True, help="模型英文简称")
     parser.add_argument("--timestamp", required=True, help="session 时间戳 YYYYMMDD-HHMMSS")
     parser.add_argument("--output-dir", required=True, help="输出目录 (通常是 data-profile/)")
-    parser.add_argument("--dt-col", default="pday", help="时间列名, 默认 pday")
+    parser.add_argument("--dt-col", default="f_p_date", help="时间列名, 默认 f_p_date")
     parser.add_argument("--time-col", default=argparse.SUPPRESS, dest="time_col_deprecated",
                         help="[已弃用 alias] 用 --dt-col; 传入时覆盖 --dt-col")
     parser.add_argument("--label-col", default="label", help="标签列名, 默认 label")
-    parser.add_argument("--id-cols", default="user_no", help="用户唯一标识列名(逗号分隔多列时取首列作主 ID), 默认 user_no")
+    parser.add_argument("--id-cols", default="fuid", help="用户唯一标识列名(逗号分隔多列时取首列作主 ID), 默认 fuid")
     parser.add_argument("--id-col", default=argparse.SUPPRESS, dest="id_col_deprecated",
                         help="[已弃用 alias] 用 --id-cols; 传入时覆盖 --id-cols (单列)")
     parser.add_argument("--sample-table", default=None, help="样本源表名 (写入 manifest 用, 可选)")
@@ -569,7 +587,7 @@ def main() -> None:
     if hasattr(args, "id_col_deprecated") and args.id_col_deprecated:
         args.id_cols = args.id_col_deprecated
     # 分析侧只取单列作主 ID
-    args._id_col_primary = args.id_cols.split(",")[0].strip() if args.id_cols else "user_no"
+    args._id_col_primary = args.id_cols.split(",")[0].strip() if args.id_cols else "fuid"
 
     if not os.path.exists(args.sample):
         raise SystemExit("样本文件不存在: %s" % args.sample)

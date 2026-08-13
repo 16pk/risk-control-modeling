@@ -463,7 +463,7 @@ def run_analysis(
     model["features"] = features
     validate_config(cfg)
     label_col = model.get("label_col", "label")
-    dt_col = model.get("dt_col", "pday")
+    dt_col = model.get("dt_col", "f_p_date")
 
     # ---- 数据加载 + 计算资源路由探测 + 哨兵值替换 + 内部切分 ----
     df = pd.read_parquet(data_path) if data_path.endswith(".parquet") else pd.read_csv(data_path)

@@ -56,7 +56,7 @@ model-skills/
 | Skill | 说明 |
 |---|---|
 | `classification-model-orchestration` | 分类流程总调度，承接 routing_input，串联 task-spec → recommend → feature-matching → development，管理 session 目录与断点续跑 |
-| `classification-model-task-spec` | 需求挖掘 + 样本分析，输出 4 段式 task-spec.md 与 `_manifest.json`，拉取样本（仅 user_no/label/pday + 补充字段）并切分 Train/Test/OOT（OOT 按时间顺序且晚于训练窗；train/val 开发集可随机切分保证同分布） |
+| `classification-model-task-spec` | 需求挖掘 + 样本分析，输出 4 段式 task-spec.md 与 `_manifest.json`，拉取样本（仅 fuid/label/f_p_date + 补充字段）并切分 Train/Test/OOT（OOT 按时间顺序且晚于训练窗；train/val 开发集可随机切分保证同分布） |
 | `classification-model-recommend` | 从历史模型台账检索可复用模型，语义筛选排序 + 适配度评估，可选委托 evaluation 产三档评估 |
 | `classification-model-development` | 开发总控，按 Stage 0~4 迭代式编排 feature-analysis / training / tuning / comparison，管理路径接力、决策点询问、report.md 回填 |
 | `classification-model-training` | 训练 xgb / dnn / lr 模型，读上游 feature-analysis 切分数据，产八阶段产物，并与历史 baseline 做 AUC/KS/分档多维对比 |
@@ -113,7 +113,7 @@ model-task-routing（一次性提问 Q1/Q2/Q3 → 评估需求是否为 classifi
 |---|---|
 | 分类建模（local_file） | 一份含 `id + 特征列 + label`（可含日期列）的 parquet/csv |
 | 分类建模（local_file 演示） | 内置演示数据 `data/demo/credit_risk_demo.csv`（1000 行 × 18 列，A 卡申请评分卡风格，含 `apply_date`/`is_bad`，坏率 9.6%，含少量缺失值），可先跑通全流程再替换真实数据 |
-| 分类建模（spark） | 数仓样本表（含 `user_no/label/pday`）+ 特征宽表 |
+| 分类建模（spark） | 数仓样本表（含 `fuid/label/f_p_date`）+ 特征宽表 |
 | 历史模型推荐 | `model-knowledge` 台账 `model_catalog.csv` 中有可检索的历史模型条目 |
 
 ## 使用说明
@@ -152,7 +152,12 @@ runs/20260624-114630-draw_willingness/
 │       ├── predictions/ · explainability/
 │       ├── comparison/ · logs/
 │       └── _manifest.json
-└── model-comparison/                      # N-way 横向对比产物
+├── model-comparison/                      # N-way 横向对比产物
+└── scripts/                               # 各阶段执行命令 + 脚本源码快照（record_stage.py 落）
+    ├── _manifest.json                     # 集中清单（按 stage 索引）
+    └── {stage}/                           # task-spec / feature-matching / feature-analysis / training / tuning / comparison / fico / fill_report
+        ├── <入口脚本>.py                  # 源码快照
+        └── command.json                   # 执行命令详情（cmd/timestamp/sha256/python）
 ```
 
 ## 命名约定
@@ -174,6 +179,7 @@ runs/20260624-114630-draw_willingness/
 | `model-evo/_modelevo-shared/scripts/config_io.py` | yaml 配置读写 + 必填校验 + 数据安全红线（`load_config` / `validate_common` / `check_sensitive`，命中身份证/手机号即抛错） |
 | `model-evo/_modelevo-shared/scripts/fetch_spark.py` | PySpark 集群取数 |
 | `model-evo/_modelevo-shared/scripts/gen_fetch_command.py` | spark-submit wrapper 脚本生成 |
+| `model-evo/_modelevo-shared/scripts/record_stage.py` | pipeline 阶段脚本快照记录：把「执行命令 + 入口脚本源码快照」落盘到 `<session>/scripts/<stage>/`（集中清单 `_manifest.json`，保证可复现） |
 | `model-evo/_modelevo-shared/scripts/spark_defaults.template.yaml` | Spark 提交默认资源档模板（复制为 `spark_defaults.yaml` 后填本集群值，不入库） |
 | `model-evo/_modelevo-shared/tests/` | 公共代码单元测试 |
 

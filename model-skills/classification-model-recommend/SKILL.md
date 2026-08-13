@@ -16,7 +16,7 @@ description: 给业务人员推荐历史营销模型——解析自然语言需�
 | 模型报告 | 否 | `model-knowledge/assets/historical-model-knowledge/reports/` | `{model_id}_{模型简称}.md` 及同名 `.json`;`模型报告路径` 列非空时提取历史指标展示 |
 | `session_dir` | 评估时必选 | 会话启动确认(见根目录 CLAUDE.md) | 推荐落盘与评估产物目录 `${session_dir}/model-recommend/{model_id}/` |
 | `split_ranges` | 评估时必选 | `task-spec/_manifest.json` 或 `data-profile/_manifest.json` | train_range / test_range / oot_range 三档切分区间 |
-| 样本表 / 模型表 | 评估时必选 | task-spec manifest / 台账 `模型表` 字段 | 样本表提供 label,模型表提供 score;JOIN key **必须 = [ID + 日期分区列](默认 `[user_no≈fuid, pday]`,硬校验 RED-0102)** |
+| 样本表 / 模型表 | 评估时必选 | task-spec manifest / 台账 `模型表` 字段 | 样本表提供 label,模型表提供 score;JOIN key **必须 = [ID + 日期分区列](默认 `[fuid, f_p_date]`,硬校验 RED-0102)** |
 
 ## 2. 执行命令
 
@@ -32,11 +32,11 @@ python <skill_dir>/scripts/fetch_eval_sample.py \
   --model-id <model_id> \
   --sample-table <db>.<sample_table> \
   --score-table <db>.<score_table> \
-  --join-keys user_no,pday \
-  --fetch-start <YYYYMMDD> --fetch-end <YYYYMMDD> \
-  --train-range <YYYYMMDD>,<YYYYMMDD> \
-  --test-range  <YYYYMMDD>,<YYYYMMDD> \
-  --oot-range   <YYYYMMDD>,<YYYYMMDD> \
+  --join-keys fuid,f_p_date \
+  --fetch-start <YYYY-MM-DD> --fetch-end <YYYY-MM-DD> \
+  --train-range <YYYY-MM-DD>,<YYYY-MM-DD> \
+  --test-range  <YYYY-MM-DD>,<YYYY-MM-DD> \
+  --oot-range   <YYYY-MM-DD>,<YYYY-MM-DD> \
   --score-col score --label-col label
 # 加 --submit 同步执行 wrapper; 加 --no-eval 仅产 predictions 跳过评估
 ```
@@ -95,7 +95,7 @@ python <skill_dir>/scripts/fetch_eval_sample.py \
 **输入信息传递**:
 - 样本表: `task-spec/_manifest.json` 中的 `source_table`(含 label + 关联键)
 - 模型表: 推荐结果 Top1 的 `model_table`(提供 score)
-- 关联键: 默认 `[user_no, pday]`,两表同名(否则需建视图别名)
+- 关联键: 默认 `[fuid, f_p_date]`,两表同名(否则需建视图别名)
 - 切分区间: 复用 `data-profile/_manifest.json` 中的 `split_ranges`
 - 分数字段: 默认 `score`,可在 CLI `--score-col` 覆盖
 - 标签字段: 默认 `label`,可在 CLI `--label-col` 覆盖

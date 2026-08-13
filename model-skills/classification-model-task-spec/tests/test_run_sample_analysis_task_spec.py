@@ -14,17 +14,21 @@ sys.path.insert(0, str(_SCRIPTS))
 import run_sample_analysis_task_spec as rsa
 
 
-def _make_sample(tmp_path, n_per_pday=10, pday_list=None, extra_rows=None):
-    """造一个小 parquet 样本。"""
+def _make_sample(tmp_path, n_per_pday=10, pday_list=None, extra_rows=None, date_format="%Y%m%d"):
+    """造一个小 parquet 样本(默认列名 fuid/label/f_p_date)。"""
+    import datetime as _dt
+
     if pday_list is None:
         pday_list = ["20260413", "20260430", "20260508", "20260516", "20260524"]
     rows = []
     for pday in pday_list:
+        if date_format == "%Y-%m-%d" and "-" not in pday:
+            pday = "%s-%s-%s" % (pday[:4], pday[4:6], pday[6:8])
         for i in range(n_per_pday):
             rows.append({
-                "user_no": "u_%s_%d" % (pday, i),
+                "fuid": "u_%s_%d" % (pday, i),
                 "label": 1 if i < 2 else 0,   # 2/10 正样本
-                "pday": pday,
+                "f_p_date": pday,
             })
     if extra_rows:
         rows.extend(extra_rows)
@@ -92,7 +96,7 @@ def test_standard_flow(tmp_path):
 
 def test_dropped_rows(tmp_path):
     """用例 2: 区间外有行被丢弃。"""
-    extra = [{"user_no": "u_extra_%d" % i, "label": 0, "pday": "20260601"} for i in range(10)]
+    extra = [{"fuid": "u_extra_%d" % i, "label": 0, "f_p_date": "20260601"} for i in range(10)]
     p, df = _make_sample(tmp_path, extra_rows=extra)
     proc, out_dir = _run_script(
         p, tmp_path,
@@ -110,18 +114,18 @@ def test_dropped_rows(tmp_path):
 
 
 def test_missing_columns(tmp_path):
-    """用例 3a: 缺 user_no 列。"""
-    df = pd.DataFrame([{"label": 0, "pday": "20260413"} for _ in range(10)])
+    """用例 3a: 缺 fuid 列。"""
+    df = pd.DataFrame([{"label": 0, "f_p_date": "20260413"} for _ in range(10)])
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
     proc, _ = _run_script(p, tmp_path, "20260401,20260510", "20260511,20260520", "20260521,20260530")
     assert proc.returncode != 0
-    assert "user_no" in proc.stdout or "user_no" in proc.stderr
+    assert "fuid" in proc.stdout or "fuid" in proc.stderr
 
 
 def test_bad_label(tmp_path):
     """用例 3b: label 含 2。"""
-    rows = [{"user_no": "u_%d" % i, "label": 2, "pday": "20260413"} for i in range(10)]
+    rows = [{"fuid": "u_%d" % i, "label": 2, "f_p_date": "20260413"} for i in range(10)]
     df = pd.DataFrame(rows)
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
@@ -131,8 +135,8 @@ def test_bad_label(tmp_path):
 
 
 def test_bad_pday(tmp_path):
-    """用例 3c: pday 含非 8 位。"""
-    rows = [{"user_no": "u_%d" % i, "label": 0, "pday": "2026"} for i in range(10)]
+    """用例 3c: f_p_date 含非法日期。"""
+    rows = [{"fuid": "u_%d" % i, "label": 0, "f_p_date": "2026"} for i in range(10)]
     df = pd.DataFrame(rows)
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
@@ -166,6 +170,10 @@ def test_sample_not_exist(tmp_path):
 def test_parse_range_ok():
     """parse_range 合法输入。"""
     assert rsa.parse_range("20260401,20260510") == ("20260401", "20260510")
+    # 双格式兼容: YYYY-MM-DD 归一化为 8 位
+    assert rsa.parse_range("2026-04-01,2026-05-10") == ("20260401", "20260510")
+    # 混合格式(前 YYYY-MM-DD / 后 YYYYMMDD)
+    assert rsa.parse_range("2026-04-01,20260510") == ("20260401", "20260510")
 
 
 def test_parse_range_bad():
@@ -176,6 +184,8 @@ def test_parse_range_bad():
         rsa.parse_range("2026,20260510")
     with pytest.raises(ValueError):
         rsa.parse_range("20260510,20260401")   # 起 > 止
+    with pytest.raises(ValueError):
+        rsa.parse_range("2026-13-01,20260510")   # 非法月份
 
 
 def test_validate_ranges_adjacent():
@@ -209,3 +219,22 @@ def test_judge_sufficiency():
     assert rsa.judge_sufficiency({"positive_samples": 15000, "total_samples": 150000})["judgment"] == "充足"
     assert rsa.judge_sufficiency({"positive_samples": 5000, "total_samples": 50000})["judgment"] == "基本可用"
     assert rsa.judge_sufficiency({"positive_samples": 100, "total_samples": 1000})["judgment"] == "不足，建议补充样本"
+
+
+def test_standard_flow_dual_format(tmp_path):
+    """用例 4: 数据列用 YYYY-MM-DD, 区间用混合双格式, 归一化切分正确。"""
+    p, df = _make_sample(tmp_path, date_format="%Y-%m-%d")
+    proc, out_dir = _run_script(
+        p, tmp_path,
+        "2026-04-01,2026-05-10",   # train 覆盖 2026-04-13/04-30/05-08
+        "2026-05-11,20260520",     # eval 覆盖 2026-05-16
+        "20260521,2026-05-30",     # oot 覆盖 2026-05-24
+    )
+    assert proc.returncode == 0, "脚本失败: %s\n%s" % (proc.stdout, proc.stderr)
+    manifest = json.loads((out_dir / "_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["sample_summary"]["total_samples"] == 50
+    sp = manifest["split"]["splits"]
+    assert sp["train"]["rows"] + sp["test"]["rows"] + sp["oot"]["rows"] == 50
+    assert sp["train"]["rows"] == 30 and sp["test"]["rows"] == 10 and sp["oot"]["rows"] == 10
+    # 月份聚合(>10 天时)应产出 YYYYMM 前缀
+    assert all(isinstance(s["pday"], str) and s["pday"][:4] == "2026" for s in manifest["time_segments"])

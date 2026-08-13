@@ -175,3 +175,31 @@ def test_lag_one_specified_features_keeps_dt_in_b_cols_and_outer():
     # b.* EXCEPT 全列模式才需要显式排除 pday(该分支由既有 test_lag_one_all_columns_except_dt 覆盖)
     outer_select = sql[:sql.find(" FROM (SELECT")]
     assert outer_select.count("pday") == 1
+
+
+def test_lag_one_dual_format_dates_normalized():
+    """YYYY-MM-DD 输入在 SQL 内归一化为 8 位 YYYYMMDD(lag 窗口平移与比较一致)。"""
+    sql = build_sample_feature_sql(
+        sample_table="db.sample", feature_table="db.feat",
+        join_keys=["user_no", "pday"], dt_col="pday",
+        label_expr="label", id_cols=["user_no"], features=["f0"],
+        fetch_start="2026-01-01", fetch_end="2026-01-31", where=None,
+        feature_lag_day=1,
+    )
+    # 样本窗口归一化: 20260101 ~ 20260131
+    assert "FROM db.sample WHERE pday >= '20260101' AND pday <= '20260131'" in sql
+    # 特征窗口平移 -1 天: 20251231 ~ 20260130
+    assert "FROM db.feat WHERE pday >= '20251231' AND pday <= '20260130'" in sql
+
+
+def test_lag_zero_default_join_keys_fuid_fpdate():
+    """缺省 join_keys 兜底为 [fuid, f_p_date](默认列名已更新)。"""
+    sql = build_sample_feature_sql(
+        sample_table="db.sample", feature_table="db.feat",
+        join_keys=None, dt_col="f_p_date",
+        label_expr="label", id_cols=["fuid"], features=["f0"],
+        fetch_start="2026-01-01", fetch_end="2026-01-31", where=None,
+        feature_lag_day=0,
+    )
+    assert "a.fuid=b.fuid" in sql
+    assert "a.f_p_date=b.f_p_date" in sql

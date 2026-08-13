@@ -53,8 +53,8 @@ yaml 内关键字段:
 |---|:---:|---|
 | `model.label_col` | ✅ | 标签列名,仅支持二分类 0/1 |
 | `model.features` / `model.feature_list_source` | 见「特征清单交互约定」 | 特征来源(与 CLI `--feature_list_source` 三选一,优先级见约定) |
-| `model.split` | ✅ | `train_range` / `test_range` / `oot_range` 三档 pday 区间(8 位 YYYYMMDD,起 ≤ 止,三档时序递增);未配置直接报错 |
-| `model.dt_col` | 否 | 默认 `pday`,用于 `model.split` 区间切分 |
+| `model.split` | ✅ | `train_range` / `test_range` / `oot_range` 三档日期区间(默认 YYYY-MM-DD,兼容 8 位 YYYYMMDD,起 ≤ 止,三档时序递增);未配置直接报错 |
+| `model.dt_col` | 否 | 默认 `f_p_date`,用于 `model.split` 区间切分 |
 | `model.invalid_values` | 否 | 哨兵值集合(默认 `[-1,-2,-9,-99,-999,-9999,-99999]`):入模特征命中这些值在**切分前替换为 NaN**(空值),splits 三档均为清洗后数据;传 `[]` 关闭;可用 CLI `--invalid-values` 覆盖 |
 | `analysis.iv.n_bins` | 否 | 默认 `10`,IV 等频分箱数 |
 | `analysis.psi.n_bins` | 否 | 默认 `10`,PSI 分箱数 |

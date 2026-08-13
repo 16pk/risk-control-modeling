@@ -79,17 +79,17 @@ model:
   version: v1
   sample_table: <db>.<sample_table>     # 样本表(提供 label)
   feature_table: <db>.<score_table>     # 模型表(提供 score)
-  join_keys: [user_no, pday]
-  dt_col: pday                          # 须样本表与模型表同名
-  id_cols: [user_no]
-  fetch_dt: [<YYYYMMDD>, <YYYYMMDD>]    # 须覆盖 train+test+oot 并集
+  join_keys: [fuid, f_p_date]
+  dt_col: f_p_date                      # 须样本表与模型表同名
+  id_cols: [fuid]
+  fetch_dt: [<YYYY-MM-DD>, <YYYY-MM-DD>]    # 须覆盖 train+test+oot 并集; 兼容 8 位 YYYYMMDD
   where: null                           # 可选客群筛选; 严禁硬编码用户ID/手机号/身份证号
   label_col: label
   features: [score]                     # 模型分列, recommend 语境下 features 就这一个
   split:
-    train_range: [<YYYYMMDD>, <YYYYMMDD>]
-    test_range:  [<YYYYMMDD>, <YYYYMMDD>]
-    oot_range:   [<YYYYMMDD>, <YYYYMMDD>]
+    train_range: [<YYYY-MM-DD>, <YYYY-MM-DD>]
+    test_range:  [<YYYY-MM-DD>, <YYYY-MM-DD>]
+    oot_range:   [<YYYY-MM-DD>, <YYYY-MM-DD>]
 ```
 
 ---

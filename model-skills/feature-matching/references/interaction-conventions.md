@@ -68,7 +68,7 @@
 
 1. 样本表 → `model.sample_table`(提供 label + 主键的主表)
 2. 特征表 → `model.feature_table`(提供特征的副表)
-3. join-key → `model.join_keys`,**默认不要闷头用 `user_no+pday`**
+3. join-key → `model.join_keys`,**默认不要闷头用 `fuid+f_p_date`**
 4. 特征列 → `model.features` / `feature_list_source`,留空=取特征表全部列或指定清单
 5. HDFS 中间路径 → `spark_submit.hdfs_base`,**必填**,留空会把本地路径误当 HDFS 写触发权限错误
 
@@ -78,7 +78,7 @@
 2. 无 task-spec 时退而从其他上游 markdown(`classification-model-recommend` 的 `reports/{model_id}_*.md`、`classification-model-training` 的 run `report.md` 或用户提供的任意 markdown)解析
 3. 文档缺失或解析不全时逐项交互询问:
    - 样本表/特征表(库.表)
-   - join-key(`user_no + pday` 时序样本 / 仅 `user_no` 无日期维度 / 其他列名)
+   - join-key(`fuid + f_p_date` 时序样本 / 仅 `fuid` 无日期维度 / 其他列名)
    - 特征列(全部列/指定清单)
    - HDFS 中间路径(默认家目录或用户指定)
    - 另需确认 label 列名与取数窗口

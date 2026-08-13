@@ -24,9 +24,9 @@ model:
   #   sample_table: local_file
   mode: spark                 # 取数模式: spark(默认) | local_file(本地 parquet, 跳过 spark 取数)
   sample_table: your_db.xxx  # spark 模式必填(库.表); local_file 模式填 local_file 占位
-  dt_col: pday                # 日期分区字段(YYYYMMDD 8位; 用于评估报告展示; 切分由 feature-analysis 负责)
+  dt_col: f_p_date            # 日期分区字段(默认 YYYY-MM-DD, 兼容 8 位 YYYYMMDD; 用于评估报告展示; 切分由 feature-analysis 负责)
   label_col: label            # 标签字段(0/1)
-  id_cols: [user_id]          # 去重/落盘用, exclude_cols 排除, 不入模
+  id_cols: [fuid]             # 去重/落盘用, exclude_cols 排除, 不入模
 
   features: []                          # 默认全量特征(留空走 feature_list_source, 如 model-knowledge/assets/feature-knowledge/feature-list/feature-list-user-operation-v1.csv);
                                         # 特征筛选是 classification-model-tuning 的职责, 本 skill 不做

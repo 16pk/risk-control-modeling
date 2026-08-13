@@ -50,6 +50,19 @@ python <skill_dir>/scripts/run_build.py \
 --version v1                   # 可选; 否则按 yaml.run_label → 自动自增
 ```
 
+**脚本快照记录(强制)**: `run_build.py` 训练完成后,必须调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/training/`(集中清单 `<session_dir>/scripts/_manifest.json`);LightGBM 自定义路径(`train_lgb_template.py`)同此记录:
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage training \
+    --script <skill_dir>/scripts/run_build.py \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "baseline 训练 / 换算法重训"]
+```
+
+`--cmd` 传实际执行的那条命令原样(建议 shell 单引号包裹);同一 stage 的多次训练(如 `-feat` / `-tuned` 迭代产生的 run_build 调用)用 `--label` 区分。
+
 `--data_dir` 可选,默认从同 session 下 `<session_dir>/sample-features/` 读 `splits/{train,test,oot}.parquet`(由 `feature-analysis` 切分产出);若需用其他数据,显式传 `--data_dir` override(指向含 `splits/` 子目录的目录)。`--output_dir` 直接传 `<session_dir>`,`run_build` 会在其下落 `new-models/{algo}-v{N}/`(无 `classification-model-training/` 中间层)。test.parquet 当 val 段(early stopping);进程内用调优超参训练(`tune_train.TUNED_PARAMS`: depth 6 / lr 0.03 / n 800 + early-stop;比 `engines/_xgb/entry.py` 的强正则默认更高容量,避免欠拟合)。
 
 训练完成后,模型报告路径需人工登记到 `classification-model-recommend` 台账(本 skill 不自动改 csv)。
@@ -161,6 +174,8 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 | 🟢 交付层 | `model/model.pkl|json`、`evaluation/*_eval.xlsx`、单 run `report.md` | 用户要看/要部署的 |
 | 🟡 可复现层 | `config.json`、`config/train_config.yaml`、`features/used-feature-list.csv`、`logs/` | 保证可重跑、可追溯，不对外展示 |
 | 🔵 缓存层 | `predictions/*.parquet`（评估中间输入）、`explainability/`、`comparison/`、`_manifest.json` 系列 | 内部中间产物，**不计入交付**；删除不影响交付 |
+
+> session 级 `<session_dir>/scripts/`(2.1 节 `record_stage.py` 记录的「执行命令 + 脚本源码快照」)属 🟡 可复现层,由编排器收口时随 `deliverables.md` 一并交付(见 `classification-model-orchestration`)。
 
 **规则**：
 1. **报告以 XLSX 为主**：对外呈现统一看 `evaluation/*_eval.xlsx`（含三档指标 + 十分桶 + 特征重要性多 sheet）；`*_eval.{json,md}` 保留为内部（机器对比/断点用），不进交付清单。

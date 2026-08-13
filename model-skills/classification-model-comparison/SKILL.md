@@ -42,6 +42,21 @@ python <skill_dir>/scripts/aggregate_session_comparison.py \
 
 脚本扫描 `new-models/*/evaluation/` 和 `model-recommend/*/evaluation/` 下的 eval JSON，对 oot 和 all 两档分别调 `compare_models.py` 对比，最终合成一份 combined 输出（中间产物落临时目录自动清理）。
 
+### 2.1 脚本快照记录(强制,手动跑时)
+
+`aggregate_session_comparison.py` **手动执行**成功后,必须调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/comparison/`(集中清单 `<session_dir>/scripts/_manifest.json`);若由 `run_build.py` 末尾自动触发(development 编排场景),无需重复记录:
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage comparison \
+    --script <skill_dir>/scripts/aggregate_session_comparison.py \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "横向对比"]
+```
+
+`compare_models.py` 单次对比(手动指定 JSON 列表)同理由编排方或本 skill 按上述模板记录(`--stage comparison`)。
+
 ## 3. 参数说明
 
 ### compare_models.py

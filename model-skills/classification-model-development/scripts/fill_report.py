@@ -179,7 +179,7 @@ def build_section_iv(session_dir: Path) -> str:
 
     splits = manifest.get("splits", {})
     ranges = manifest.get("ranges", {})
-    time_col = manifest.get("time_col", "pday")
+    time_col = manifest.get("time_col", "f_p_date")
     label_col = manifest.get("label_col", "label")
 
     feature_list_csv = fm_dir / "feature-list.csv"

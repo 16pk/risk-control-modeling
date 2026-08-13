@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""把 recommend 取数产出的 sample.parquet(样本表⋈模型表 JOIN 结果)按时间(pday)切分成 train/test/oot 三份。
+"""把 recommend 取数产出的 sample.parquet(样本表⋈模型表 JOIN 结果)按日期列切分成 train/test/oot 三份。
 
 独立可调起的本地 pandas 脚本, 两种切分方式(显式区间优先):
-  1. 显式 pday 区间(首选): --train-range/--test-range/--oot-range 各给闭区间 [起,止],
+  1. 显式日期区间(首选): --train-range/--test-range/--oot-range 各给闭区间 [起,止],
      区间外的行丢弃并告警; 由用户/上游 task-spec 文档给定, 口径可控。
-  2. 比例: --ratios train,test,oot, 沿 pday 升序累计行占比切分, oot 取时间最末段,
-     **同一 pday 不跨切分**(整天归一档)。
+  2. 比例: --ratios train,test,oot, 沿日期升序累计行占比切分, oot 取时间最末段,
+     **同一日期不跨切分**(整天归一档)。
 
 切分入参来源优先级: classification-model-task-spec 文档 > 其他上游 md > 交互询问。
 安全: 仅打印聚合统计, 不输出用户级明细到日志。
@@ -13,10 +13,10 @@
 用法:
     # 显式区间(首选)
     python split_sample.py --input <sample.parquet> \
-        --train-range 20260312,20260430 \
-        --test-range  20260501,20260516 \
-        --oot-range   20260517,20260524 \
-        [--time-col pday] [--label-col label] [--output_dir <同 input 目录>]
+        --train-range 2026-03-12,2026-04-30 \
+        --test-range  2026-05-01,2026-05-16 \
+        --oot-range   2026-05-17,2026-05-24 \
+        [--time-col f_p_date] [--label-col label] [--output_dir <同 input 目录>]
 
     # 比例
     python split_sample.py --input <sample.parquet> --ratios 0.6,0.2,0.2
@@ -28,6 +28,8 @@ import argparse
 import json
 import os
 from typing import Dict, List, Sequence, Tuple
+
+import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts 供 date_utils 使用
 
 
 def parse_ratios(text: str) -> Tuple[float, float, float]:
@@ -57,27 +59,26 @@ def parse_ratios(text: str) -> Tuple[float, float, float]:
 
 
 def parse_range(text: str) -> Tuple[str, str]:
-    """解析 "起,止" 闭区间(YYYYMMDD)。
+    """解析 "起,止" 闭区间(YYYY-MM-DD / YYYYMMDD 双兼容, 归一化为 8 位)。
 
     Args:
-        text: 形如 "20260312,20260430" 的字符串
+        text: 形如 "2026-03-12,2026-04-30"(或 8 位 YYYYMMDD) 的字符串
 
     Returns:
-        (start, end) 两个 8 位日期字符串
+        (start, end) 两个归一化 8 位日期字符串
 
     Raises:
-        ValueError: 非两元素 / 非 8 位数字 / 起 > 止
+        ValueError: 非两元素 / 日期不合法 / 起 > 止
     """
+    import date_utils
+
     parts = [p.strip() for p in str(text).split(",") if p.strip()]
     if len(parts) != 2:
-        raise ValueError("区间须为两元素 起,止, 如 20260312,20260430, 当前 %r" % text)
-    start, end = parts
-    for d in (start, end):
-        if not (d.isdigit() and len(d) == 8):
-            raise ValueError("区间日期须为 8 位 YYYYMMDD, 当前 %r" % d)
-    if start > end:
-        raise ValueError("区间起始 %s 不应大于结束 %s" % (start, end))
-    return start, end
+        raise ValueError("区间须为两元素 起,止, 如 2026-03-12,2026-04-30(或 YYYYMMDD), 当前 %r" % text)
+    norm = [date_utils.parse_date(d, what="range") for d in parts]
+    if norm[0] > norm[1]:
+        raise ValueError("区间起始 %s 不应大于结束 %s" % (norm[0], norm[1]))
+    return norm[0], norm[1]
 
 
 def validate_ranges(
@@ -106,7 +107,9 @@ def validate_ranges(
 
 
 def classify_by_ranges(pday: object, ranges: Dict[str, Tuple[str, str]]):
-    """按显式 pday 区间把单个 pday 归到 train/test/oot, 区间外返回 None。
+    """按显式日期区间把单个日期归到 train/test/oot, 区间外返回 None。
+
+    数据列值可能是 YYYY-MM-DD 或 YYYYMMDD, 统一归一化为 8 位后再与归一化后的区间比较。
 
     Args:
         pday: 待归档的日期值(转 str 比较)
@@ -115,7 +118,12 @@ def classify_by_ranges(pday: object, ranges: Dict[str, Tuple[str, str]]):
     Returns:
         "train"|"test"|"oot"|None
     """
-    p = str(pday)
+    import date_utils
+
+    try:
+        p = date_utils.normalize_date(pday)
+    except ValueError:
+        return None
     for name in ("train", "test", "oot"):
         start, end = ranges[name]
         if start <= p <= end:
@@ -245,10 +253,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="recommend 评估数据切分(本地 pandas, 按时间)")
     parser.add_argument("--input", required=True, help="sample.parquet 路径")
     parser.add_argument("--ratios", default=None, help="比例模式: train,test,oot 如 0.6,0.2,0.2(与 *-range 互斥)")
-    parser.add_argument("--train-range", default=None, help="显式模式: train 的 pday 闭区间, 如 20260312,20260430")
-    parser.add_argument("--test-range", default=None, help="显式模式: test 的 pday 闭区间, 如 20260501,20260516")
-    parser.add_argument("--oot-range", default=None, help="显式模式: oot 的 pday 闭区间, 如 20260517,20260524")
-    parser.add_argument("--time-col", default="pday", help="时间切分列, 默认 pday")
+    parser.add_argument("--train-range", default=None, help="显式模式: train 的日期闭区间, 如 2026-03-12,2026-04-30(兼容 YYYYMMDD)")
+    parser.add_argument("--test-range", default=None, help="显式模式: test 的日期闭区间, 如 2026-05-01,2026-05-16(兼容 YYYYMMDD)")
+    parser.add_argument("--oot-range", default=None, help="显式模式: oot 的日期闭区间, 如 2026-05-17,2026-05-24(兼容 YYYYMMDD)")
+    parser.add_argument("--time-col", default="f_p_date", help="时间切分列, 默认 f_p_date")
     parser.add_argument("--label-col", default="label", help="标签列(仅用于统计正样本率), 默认 label")
     parser.add_argument("--output_dir", default=None, help="输出目录, 默认与 input 同目录")
     args = parser.parse_args()

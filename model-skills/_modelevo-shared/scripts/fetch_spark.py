@@ -6,15 +6,15 @@
 SQL 拼装逻辑内联,无本地依赖,可独立提交到集群。
 
 提交方式:
-    spark-submit fetch_spark.py --table db.wide --dt-col pday \
-        --features f0,f1,f2 --fetch-start 20260301 --fetch-end 20260530 \
+    spark-submit fetch_spark.py --table db.wide --dt-col f_p_date \
+        --features f0,f1,f2 --fetch-start 2026-03-01 --fetch-end 2026-05-30 \
         --label-expr "(CASE WHEN req>0 THEN 1 ELSE 0 END)" \
-        [--where "seg='活跃户'"] [--id-cols user_no] --out sample.parquet
+        [--where "seg='活跃户'"] [--id-cols fuid] --out sample.parquet
 
 或样本表⋈特征表模式:
     spark-submit fetch_spark.py --sample-table db.sample --feature-table db.features \
-        --join-keys user_no,pday --fetch-start 20260301 --fetch-end 20260530 \
-        --label-col label --features f0,f1 --id-cols user_no --out sample.parquet
+        --join-keys fuid,f_p_date --fetch-start 2026-03-01 --fetch-end 2026-05-30 \
+        --label-col label --features f0,f1 --id-cols fuid --out sample.parquet
 
 数据安全: 仅取所需列,不输出用户级明细到日志。
 """
@@ -53,20 +53,20 @@ def validate_join_keys(keys, dt_col):
     missing_id = all(str(k) == str(dt_col) for k in keys)
     if missing_id:
         raise ValueError(
-            "样本集 JOIN 红线: join_keys=%r 缺少 ID 类键(如 user_no/fuid), "
+            "样本集 JOIN 红线: join_keys=%r 缺少 ID 类键(如 fuid), "
             "须为 [ID列, 日期列(%s)] 双键联接。" % (list(keys), dt_col)
         )
     if str(dt_col) not in {str(k) for k in keys}:
         raise ValueError(
             "样本集 JOIN 红线: join_keys=%r 缺失日期分区列 %s, 仅以单ID联接会跨日错配,"
-            " 必须同时包含日期列(示例: ['user_no', '%s'])。"
-            " 若表中日期列实际名为其他值(如 f_p_date), 请显式传 dt_col, 不依赖自动猜测。"
+            " 必须同时包含日期列(示例: ['fuid', '%s'])。"
+            " 若表中日期列实际名为其他值(如 pday), 请显式传 dt_col, 不依赖自动猜测。"
             % (list(keys), dt_col, dt_col)
         )
 
 
 def _default_join_hint(dt_col):
-    return ["user_no", dt_col]
+    return ["fuid", dt_col]
 
 
 def build_sample_feature_sql(
@@ -86,7 +86,13 @@ def build_sample_feature_sql(
         a.{dt_col} = date_format(date_add(to_date(b.{dt_col},'yyyyMMdd'),1),'yyyyMMdd'),
         特征表时间窗自动平移为 [fetch_start-1, fetch_end-1]。要求 dt_col 必须在 join_keys 中。
     """
-    keys = list(join_keys) if join_keys else ["user_no", dt_col]
+    from date_utils import parse_date
+
+    # 内部统一用归一化 8 位 YYYYMMDD 做比较/算术, 保证 start<=p<=end 语义正确(双格式兼容)
+    fetch_start = parse_date(fetch_start, what="fetch_start")
+    fetch_end = parse_date(fetch_end, what="fetch_end")
+
+    keys = list(join_keys) if join_keys else ["fuid", dt_col]
     validate_join_keys(keys, dt_col)
 
     if feature_lag_day not in (0, 1):
@@ -99,11 +105,9 @@ def build_sample_feature_sql(
                 "当前 join_keys=%r" % (dt_col, keys)
             )
         join_keys_eq = [k for k in keys if k != dt_col]
-        from datetime import datetime, timedelta
-        s_dt = datetime.strptime(str(fetch_start), "%Y%m%d")
-        e_dt = datetime.strptime(str(fetch_end), "%Y%m%d")
-        feat_start = (s_dt - timedelta(days=1)).strftime("%Y%m%d")
-        feat_end = (e_dt - timedelta(days=1)).strftime("%Y%m%d")
+        from date_utils import shift_days
+        feat_start = shift_days(fetch_start, -1)
+        feat_end = shift_days(fetch_end, -1)
         join_on_ab = " AND ".join(f"a.{k}=b.{k}" for k in join_keys_eq) + \
             f" AND a.{dt_col} = date_format(date_add(to_date(b.{dt_col}, 'yyyyMMdd'), 1), 'yyyyMMdd')"
     else:
@@ -175,6 +179,12 @@ def build_fetch_sql(
 
     单表模式: 直接从宽表取特征+标签。
     """
+    from date_utils import parse_date
+
+    # 内部统一用归一化 8 位 YYYYMMDD 做比较(双格式兼容)
+    fetch_start = parse_date(fetch_start, what="fetch_start")
+    fetch_end = parse_date(fetch_end, what="fetch_end")
+
     cols = []
     for c in list(id_cols) + list(features) + [dt_col]:
         if c and c not in cols:
@@ -199,11 +209,11 @@ def main():
     parser.add_argument("--table", required=False, help="样本宽表 库.表(单表模式)")
     parser.add_argument("--sample-table", default=None, help="样本表 库.表(样本⋈特征模式, 提供 label)")
     parser.add_argument("--feature-table", default=None, help="特征表 库.表(样本⋈特征模式, 提供全部特征)")
-    parser.add_argument("--join-keys", default="user_no,pday", help="样本⋈特征 JOIN 键(逗号分隔), 默认 user_no,pday")
-    parser.add_argument("--dt-col", default="pday", help="日期分区字段")
+    parser.add_argument("--join-keys", default="fuid,f_p_date", help="样本⋈特征 JOIN 键(逗号分隔), 默认 fuid,f_p_date")
+    parser.add_argument("--dt-col", default="f_p_date", help="日期分区字段(默认 f_p_date)")
     parser.add_argument("--features", default="", help="逗号分隔特征列(拼接模式留空=取特征表全部列)")
-    parser.add_argument("--fetch-start", required=True, help="取数起始日期 YYYYMMDD")
-    parser.add_argument("--fetch-end", required=True, help="取数结束日期 YYYYMMDD")
+    parser.add_argument("--fetch-start", required=True, help="取数起始日期 YYYY-MM-DD(兼容 YYYYMMDD)")
+    parser.add_argument("--fetch-end", required=True, help="取数结束日期 YYYY-MM-DD(兼容 YYYYMMDD)")
     parser.add_argument("--label-expr", default=None, help="SQL 标签表达式,如 '(CASE WHEN x>0 THEN 1 ELSE 0 END)'")
     parser.add_argument("--label-col", default=None, help="标签列名(无 label-expr 时使用)")
     parser.add_argument("--id-cols", default="", help="逗号分隔 ID 列")

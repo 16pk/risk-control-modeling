@@ -109,7 +109,8 @@ mkdir -p runs/${TIMESTAMP}-{model_name}/{task-spec,data-profile}
 | `sample-features/splits/` | feature-analysis | `train/test/oot.parquet`（**session 内唯一切分**） | 三个 parquet 存在 |
 | `new-models/{algo}-{run_label}/` | development | `config.json` + `model/` + `features/` + `evaluation/` + `predictions/` + `explainability/` + `logs/run.log` + `report.md`；**交付层 = model + evaluation/*.xlsx + report.md**，predictions/explainability/features 为缓存层（评估依赖，保留不交付） | `config.json` + `model/` + `evaluation/` 存在 |
 | `model-comparison/` | Dev Stage 3 | `model-comparison_{all,oot}.{md,json,xlsx}` + `对比报告.{json,md,xlsx}` + `_manifest.json`（仅 oot/all 两档，无 train/test） | `_manifest.json` 存在 |
-| `deliverables.md`（session 根） | 收口产出 | **对外交付清单**：仅列交付层文件（总 report.md + 各 run evaluation xlsx + model pkl + 特征分析 report.xlsx + 训练脚本），其余分层产物显式声明"保留不交付" | 收口时存在 |
+| `scripts/` | 各阶段(record_stage.py) | **执行命令 + 脚本源码快照**（🟡 可复现层）：按阶段子目录 `{task-spec,feature-matching,feature-analysis,training,tuning,comparison,fico,fill_report}/`，每阶段含入口脚本 .py 快照 + `command.json`；集中清单 `scripts/_manifest.json` | `scripts/_manifest.json` 存在 |
+| `deliverables.md`（session 根） | 收口产出 | **对外交付清单**：仅列交付层文件（总 report.md + 各 run evaluation xlsx + model pkl + 特征分析 report.xlsx + `scripts/` 各阶段脚本快照），其余分层产物显式声明"保留不交付" | 收口时存在 |
 
 **deliverables.md 产出规范（v2 新增）**：
 
@@ -128,10 +129,10 @@ mkdir -p runs/${TIMESTAMP}-{model_name}/{task-spec,data-profile}
 | 2 | `new-models/{algo}-v{N}/evaluation/report.xlsx` | 模型评估（三档 AUC/KS/桶排序/特征重要性） |
 | 3 | `new-models/{algo}-v{N}/model/model.pkl` | 可加载推理的模型文件 |
 | 4 | `sample-features/feature-analysis/analysis/report.xlsx` | 特征质量报告（IV/PSI/WOE 合并） |
-| 5 | `scripts/train_*.py` | 训练脚本（可复跑） |
+| 5 | `scripts/`（`_manifest.json` 索引） | 各阶段执行命令 + 脚本源码快照（`scripts/<stage>/*.py` + `command.json`，可复现） |
 
 ## 🟡🟢 可复现层（保留，不交付）
-配置 yaml / 特征清单 / splits / manifest / logs —— 保证可复跑与断点续跑，删除不影响交付。
+配置 yaml / 特征清单 / splits / manifest / logs / `scripts/` 各阶段明细（`command.json`）—— 保证可复跑与断点续跑，删除不影响交付。
 
 ## 🔵 缓存层（保留，不交付）
 predictions / explainability / analysis 明细表 / data-profile 三档 parquet（与 splits 重复）——内部中间产物。
@@ -146,6 +147,9 @@ predictions / explainability / analysis 明细表 / data-profile 三档 parquet�
   - 调 `feature-matching/scripts/fetch_sample.py --mode local_file`，内部走 `_local_sample_to_parquet`（复用本地 parquet/csv）+ `derive_feature_list.py`（推导特征列表），**不做宽表拉取**
   - 落 `sample-features/feature-matching/sample.parquet` + `feature-list.csv`，**不切分三档**（切分由 feature-analysis 完成）
 - 完成后调 `python classification-model-development/scripts/fill_report.py --session_dir <session_dir> --section IV` 回填 report.md 第「四」节
+- **脚本快照记录(强制)**：每次 python CLI 执行成功后,调用共享工具 `record_stage.py` 把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/<stage>/`(集中清单 `<session_dir>/scripts/_manifest.json`)。本 skill 层至少记录两条:
+  - `feature-matching` 阶段: `--stage feature-matching --script feature-matching/scripts/fetch_sample.py --cmd "<实际执行的 fetch_sample 命令>"`
+  - 回填阶段: `--stage fill_report --script classification-model-development/scripts/fill_report.py --cmd "<实际执行的 fill_report 命令>"`(development 阶段执行的 fill_report 同理记录,同一 stage 重复执行以最新一次为准)
 
 ### 3.5 建模决策
 
@@ -192,6 +196,7 @@ runs/{timestamp}-{model_name}/
 ├── sample-features/splits/    # train/test/oot.parquet（唯一切分）
 ├── new-models/{algo}-{run_label}/       # development 产（交付层 = model + evaluation/*.xlsx + report.md）
 ├── model-comparison/           # development Stage 3 产
+├── scripts/                    # 🆕 各阶段执行命令 + 脚本源码快照（record_stage.py 落，按阶段子目录 + _manifest.json 集中索引）
 ├── deliverables.md             # 🆕 对外交付清单（收口产出）
 └── report.md                   # 项目总报告（7 节 + 附录）
 ```

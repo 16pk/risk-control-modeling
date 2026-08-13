@@ -59,6 +59,21 @@ python <skill_dir>/scripts/score_to_fico.py \
   --uid_col fuid --date_col f_p_date --coef coef.json --out result_score.parquet
 ```
 
+### 脚本快照记录(强制)
+
+`score_to_fico.py` 执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/fico/`(集中清单 `<session_dir>/scripts/_manifest.json`):
+
+```bash
+python <model-skills>/_modelevo-shared/scripts/record_stage.py \
+    --session-dir <session_dir> \
+    --stage fico \
+    --script <skill_dir>/scripts/score_to_fico.py \
+    --cmd "<上面实际执行的完整命令(含全部参数)>" \
+    [--label "FICO 转分"]
+```
+
+入口 1(from-run)由 `classification-model-development` Stage 5 统一记录(development SKILL.md §4.1);入口 2(独立调用)由本 skill 自行记录,`--session-dir` 指向该样本所属 session(无 session 时可用临时目录或跳过)。
+
 ## 三、参数说明
 
 | 参数 | 必选 | 默认值 | 说明 |

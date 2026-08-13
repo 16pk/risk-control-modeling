@@ -38,7 +38,7 @@
 | `scripts/recall.py` | 规则召回, 从 `model_catalog.csv` 找候选模型 |
 | `scripts/_bootstrap.py` | 注入 `model-skills/_modelevo-shared/scripts` 到 sys.path |
 | `scripts/fetch_eval_sample.py` | 评估 entry: `--session-dir` 模式, 取数+切分+委托评估一条龙 |
-| `scripts/split_sample.py` | 本地 pandas 按 pday 区间切 train/test/oot 三档 |
+| `scripts/split_sample.py` | 本地 pandas 按日期区间切 train/test/oot 三档 |
 | `scripts/invoke_evaluation.py` | 评估委托: 三档 parquet → 临时目录 → `eval_single.py` 目录模式一次产 4 份三件套 + `_manifest.json` |
 | `scripts/eval_config.example.yaml` | 评估配置模板 |
 

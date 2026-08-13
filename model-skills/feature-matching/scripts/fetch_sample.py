@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """feature-matching 样本+特征拉取脚本。
 
-职责: 从样本表(⋈特征表)拉取 user_no/label/pday + 特征列,
+职责: 从样本表(⋈特征表)拉取 fuid/label/f_p_date + 特征列,
 落成 sample.parquet 供下游 feature-analysis / classification-model-training 复用。
 
 与 classification-model-task-spec/scripts/fetch_sample_task_spec.py 的区别:
@@ -13,10 +13,10 @@
 
 两种模式:
   - --mode spark (默认): 走 spark-submit 拉样本表/特征宽表, 落 yaml + 生成 fetch 脚本 + (可选) --submit
-  - --mode local_file: 跳过 spark, 把本地 parquet/csv 转写为 sample.parquet 落到
+  - --mode local_file: 跳过 spark, 把本地 parquet/csv/feather 转写为 sample.parquet 落到
     <session_dir>/sample-features/feature-matching/, 落 yaml (model.mode=local_file),
     调 derive_feature_list.py 派生 feature-list.csv。
-    输入 .parquet 走 shutil.copyfile 直接复制, .csv 走 pandas 读后写 parquet,
+    输入 .parquet 走 shutil.copyfile 直接复制, .csv/.feather 走 pandas 读后写 parquet,
     输出统一为 sample.parquet。
     不生成 spark-submit 脚本, --submit 无效(转写+派生已完成)
 
@@ -55,7 +55,7 @@ def _build_cfg(args: argparse.Namespace) -> dict:
     if args.features:
         features = [c.strip() for c in args.features.split(",") if c.strip()]
 
-    id_cols: List[str] = [c.strip() for c in (args.id_cols or "user_no").split(",") if c.strip()]
+    id_cols: List[str] = [c.strip() for c in (args.id_cols or "fuid").split(",") if c.strip()]
 
     # 样本集 JOIN key 组装(红线): 缺省 = [id_cols[0](≈fuid), dt_col];
     # --join-keys 显式传入时仅作覆盖。解析+校验在 main() 已做并透传过来,
@@ -157,20 +157,20 @@ def main() -> None:
     parser.add_argument("--mode", choices=["spark", "local_file"], default="spark",
                         help="取数模式: spark=走 spark-submit 拉样本表/特征宽表; local_file=本地 parquet/csv 转写为 sample.parquet + 派生特征清单")
     parser.add_argument("--local-parquet-path", default=None,
-                        help="[mode=local_file 必填] 本地 parquet/csv 路径, 含 id_cols+label_col+dt_col+features 全量列; .csv 输入会被读后转写为 sample.parquet")
+                        help="[mode=local_file 必填] 本地 parquet/csv/feather 路径, 含 id_cols+label_col+dt_col+features 全量列; .csv/.feather 输入会被读后转写为 sample.parquet")
     parser.add_argument("--sample-table", default=None,
                         help="样本表 库.表 (spark 模式必填, local_file 模式仅记录用); 公司实际表名由 model-knowledge 知识库登记")
     parser.add_argument("--feature-table", default=None, help="特征表 库.表(拼接模式); 留空=单表模式 (local_file 模式仅记录用); 公司实际表名由 model-knowledge 知识库登记")
-    parser.add_argument("--join-keys", default=None, help="拼接键(逗号分隔), 默认 user_no,pday; 仅拼接模式生效 (local_file 模式仅记录用)")
-    parser.add_argument("--fetch-start", default=None, help="取数起始日期 YYYYMMDD (spark 模式必填)")
-    parser.add_argument("--fetch-end", default=None, help="取数结束日期 YYYYMMDD (spark 模式必填)")
+    parser.add_argument("--join-keys", default=None, help="拼接键(逗号分隔), 默认 fuid,f_p_date; 仅拼接模式生效 (local_file 模式仅记录用)")
+    parser.add_argument("--fetch-start", default=None, help="取数起始日期 YYYY-MM-DD(兼容 YYYYMMDD) (spark 模式必填)")
+    parser.add_argument("--fetch-end", default=None, help="取数结束日期 YYYY-MM-DD(兼容 YYYYMMDD) (spark 模式必填)")
     parser.add_argument("--label-col", default="label", help="标签列名 (默认 label)")
     parser.add_argument("--label-expr", default=None, help="SQL 标签表达式, 非空时替代 --label-col")
     parser.add_argument("--features", default=None, help="特征列(逗号分隔); 留空=取特征表全部列(拼接模式) 或 仅样本三列(单表模式) / local_file 模式下留空=派生全量列")
     parser.add_argument("--feature-list-source", default=None, help="特征清单文件(.txt/.csv); 留空按 feature-knowledge.md 索引自动识别")
     parser.add_argument("--business-domain", default=None, help="业务域, 自动识别特征清单时的兜底匹配键; feature_table 未命中索引时用它匹配「分场景」列; 具体取值由 model-knowledge 知识库登记")
-    parser.add_argument("--id-cols", default="user_no", help="ID 列(逗号分隔), 默认 user_no")
-    parser.add_argument("--dt-col", default="pday", help="日期分区字段, 默认 pday")
+    parser.add_argument("--id-cols", default="fuid", help="ID 列(逗号分隔), 默认 fuid")
+    parser.add_argument("--dt-col", default="f_p_date", help="日期分区字段, 默认 f_p_date")
     parser.add_argument("--where", default=None, help="可选客群筛选条件; 严禁硬编码用户ID/手机号/身份证号")
     parser.add_argument("--version", default="v1", help="模型版本, 默认 v1")
     parser.add_argument("--hdfs-base", default=None, help="HDFS 中间目录, 默认 /user/<whoami>/feature-matching")
@@ -270,8 +270,8 @@ def main() -> None:
         print("  源: %s" % args.local_parquet_path)
         print("  目: %s" % out_path)
 
-        # ⚠️ 列名映射校验: local_file 模式 dt_col/id_cols/label_col 默认值是 pday/user_no/label,
-        # 若实际列名不同(如 fsx_time/fuid/dpd30_3c)必须显式传 --dt-col/--id-cols/--label-col,
+        # ⚠️ 列名映射校验: local_file 模式 dt_col/id_cols/label_col 默认值是 f_p_date/fuid/label,
+        # 若实际列名不同(如 fsx_time/user_no/dpd30_3c)必须显式传 --dt-col/--id-cols/--label-col,
         # 否则下游 feature-analysis 会按默认列名找列导致失败或口径错误。
         try:
             import pyarrow.parquet as pq
@@ -279,7 +279,7 @@ def main() -> None:
         except Exception:
             actual_cols = None
         if actual_cols is not None:
-            for key, default in (("dt_col", "pday"), ("label_col", "label")):
+            for key, default in (("dt_col", "f_p_date"), ("label_col", "label")):
                 col = model.get(key)
                 if col == default and default not in actual_cols:
                     print(

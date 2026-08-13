@@ -172,7 +172,7 @@ def run(
     train_path, test_path, oot_path, split_report_dict = _load_pre_split_data(
         splits_dir=splits_dir,
         target=target,
-        dt_col=model.get("dt_col", "pday"),
+        dt_col=model.get("dt_col", "f_p_date"),
     )
     split_mode = "pre-split"
 

@@ -45,11 +45,11 @@ split 间 PSI(如 test vs train 分数分布 PSI)不在本 skill 产出范围内
 
 ### 8b. 样本集 JOIN 红线(ID + 日期双键,ModelEvo-RED-0102)
 
-样本表⋈模型分表(score_table)JOIN key **必须 = [ID 类键(user_no/fuid)+ 日期分区列(pday)]**。
+样本表⋈模型分表(score_table)JOIN key **必须 = [ID 类键 + 日期分区列]**,默认 `[fuid, f_p_date]`。
 同一用户多日快照下,仅按单 ID join 会跨日错配标签与分数。由
 `_modelevo-shared/config_io.validate_model_join_keys` → `fetch_spark.validate_join_keys`
 统一强校验,违反即 raise ValueError 硬拦截;缺省用 `id_cols[0] + dt_col`,显式
-`--join-keys` 同样必含两者。日期列名非 pday(`f_p_date` 等)须显式传 `dt-col`,
+`--join-keys` 同样必含两者。日期列名非 f_p_date(`pday` 等)须显式传 `dt-col`,
 不做隐式猜列名。
 
 ## 9. 数据资产边界
@@ -71,7 +71,7 @@ catalog/reports 是数据资产,不属于 session,不要往 `runs/` 搬;推荐/�
 要求:
 - `dt_col` 在 `join_keys` 中
 - lag=1 时模型分表窗口自动平移为 `[fetch_start-1, fetch_end-1]`
-- split 区间仍按样本表 pday 不变
+- split 区间仍按样本表日期列不变
 
 ## 13. 异常处理
 

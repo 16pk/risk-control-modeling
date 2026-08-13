@@ -146,10 +146,35 @@ def test_split_ranges_missing_tier():
 
 
 def test_split_ranges_bad_date():
-    """非 8 位日期报错。"""
+    """非法日期(非 YYYY-MM-DD 亦非 8 位 YYYYMMDD)报错。"""
     m = _split_model()
     m["split"]["train_range"] = ["2026031", "20260430"]
-    with pytest.raises(ValueError, match="8 位"):
+    with pytest.raises(ValueError, match="日期格式不合法|不合法"):
+        validate_split_ranges(m)
+
+
+def test_split_ranges_dual_format_dash():
+    """YYYY-MM-DD 双格式输入通过, 内部归一化比较正确。"""
+    m = _split_model()
+    m["split"]["train_range"] = ["2026-03-12", "2026-04-30"]
+    m["split"]["test_range"] = ["2026-05-01", "20260516"]
+    m["split"]["oot_range"] = ["20260517", "2026-05-24"]
+    validate_split_ranges(m)
+
+
+def test_split_ranges_dual_format_mix_overlap():
+    """混合双格式下重叠/逆序仍被拦截(归一化后比较)。"""
+    m = _split_model()
+    m["split"]["test_range"] = ["2026-04-30", "20260516"]  # 与 train 20260430 同日重叠
+    with pytest.raises(ValueError, match="重叠或逆序"):
+        validate_split_ranges(m)
+
+
+def test_split_ranges_exceed_fetch_dt_dual_format():
+    """双格式下划分并集超出 fetch_dt 仍报错(归一化后比较)。"""
+    m = _split_model()
+    m["split"]["oot_range"] = ["2026-05-17", "20260601"]  # 超出 fetch_dt 末端
+    with pytest.raises(ValueError, match="超出取数窗口"):
         validate_split_ranges(m)
 
 
@@ -281,42 +306,42 @@ def _feat_model(**overrides):
     m = {
         "sample_table": "db.sample",
         "feature_table": "db.feat",
-        "dt_col": "pday",
-        "id_cols": ["user_no"],
+        "dt_col": "f_p_date",
+        "id_cols": ["fuid"],
     }
     m.update(overrides)
     return m
 
 
 def test_resolve_default_id_and_date_double_key():
-    """缺省补齐: [id_cols[0](≈fuid), dt_col] → user_no,pday。"""
+    """缺省补齐: [id_cols[0], dt_col] → fuid,f_p_date。"""
     keys = resolve_join_keys(_feat_model())
-    assert keys == ["user_no", "pday"]
+    assert keys == ["fuid", "f_p_date"]
 
 
 def test_resolve_explicit_join_keys_overrides():
     """显式 join_keys(list / str)优先,不被覆盖。"""
-    assert resolve_join_keys(_feat_model(join_keys=["user_no", "pday"])) == ["user_no", "pday"]
-    assert resolve_join_keys(_feat_model(join_keys="user_no,f_p_date")) == ["user_no", "f_p_date"]
+    assert resolve_join_keys(_feat_model(join_keys=["fuid", "f_p_date"])) == ["fuid", "f_p_date"]
+    assert resolve_join_keys(_feat_model(join_keys="fuid,f_p_date")) == ["fuid", "f_p_date"]
 
 
 def test_resolve_single_table_returns_none():
     """单表模式无 feature_table → None(不产生跨表联接)。"""
-    assert resolve_join_keys({"id_cols": ["user_no"], "dt_col": "pday"}) is None
+    assert resolve_join_keys({"id_cols": ["fuid"], "dt_col": "f_p_date"}) is None
     assert resolve_join_keys({}) is None
 
 
 def test_validate_ok_with_date_in_keys():
-    """合法双键通过; f_p_date 作为日期列时显式纳入即合规。"""
-    assert validate_model_join_keys(_feat_model()) == ["user_no", "pday"]
+    """合法双键通过; pday 作为日期列时显式纳入即合规。"""
+    assert validate_model_join_keys(_feat_model()) == ["fuid", "f_p_date"]
     assert validate_model_join_keys(
-        _feat_model(dt_col="f_p_date", join_keys=["user_no", "f_p_date"])
-    ) == ["user_no", "f_p_date"]
+        _feat_model(dt_col="pday", join_keys=["fuid", "pday"])
+    ) == ["fuid", "pday"]
 
 
 @pytest.mark.parametrize("model_kwargs", [
-    {"join_keys": ["user_no"]},                     # 只有 ID、无日期 → 违反红线
-    {"join_keys": ["pday"]},                        # 只有日期、无 ID → 违反红线
+    {"join_keys": ["fuid"]},                        # 只有 ID、无日期 → 违反红线
+    {"join_keys": ["f_p_date"]},                    # 只有日期、无 ID → 违反红线
 ])
 def test_validate_rejects_non_compliant(model_kwargs):
     """违反【ID + 日期】红线的 join_keys 一律硬拦截。"""
@@ -325,10 +350,10 @@ def test_validate_rejects_non_compliant(model_kwargs):
 
 
 def test_empty_list_falls_back_to_valid_default():
-    """空列表视为未提供 → 默认补齐为 id+date(user_no,pday), 属合法(不放行裸跑风险)。"""
-    assert validate_model_join_keys(_feat_model(join_keys=[])) == ["user_no", "pday"]
+    """空列表视为未提供 → 默认补齐为 id+date(fuid,f_p_date), 属合法(不放行裸跑风险)。"""
+    assert validate_model_join_keys(_feat_model(join_keys=[])) == ["fuid", "f_p_date"]
 
 
 def test_join_id_col_default_alignment():
-    """JOIN_ID_COL_DEFAULT 应为用户粒度 ID(=fuid 同义约定)。"""
-    assert JOIN_ID_COL_DEFAULT in ("user_no", "fuid")
+    """JOIN_ID_COL_DEFAULT 应为用户粒度 ID fuid。"""
+    assert JOIN_ID_COL_DEFAULT == "fuid"

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """classification-model-task-spec 样本拉取脚本。
 
-职责: 需求确认后, 从样本表拉取 user_no/label/pday + 补充字段(不拉特征列),
+职责: 需求确认后, 从样本表拉取 fuid/label/f_p_date + 补充字段(不拉特征列),
 落成 sample.parquet 供 run_sample_analysis_task_spec.py 分析。
 
 与 feature-matching/scripts/fetch_sample.py 的区别:
@@ -39,16 +39,16 @@ import yaml
 
 
 def _parse_range(text: str) -> List[str]:
-    """解析 '起,止' 为 [起, 止] 列表 (YYYYMMDD 8 位)。"""
+    """解析 '起,止' 为 [起, 止] 列表 (YYYY-MM-DD / YYYYMMDD 双兼容, 归一化为 8 位)。"""
+    import date_utils
+
     parts = [p.strip() for p in str(text).split(",") if p.strip()]
     if len(parts) != 2:
-        raise ValueError("区间须为两元素 起,止, 如 20260312,20260430, 当前 %r" % text)
-    for d in parts:
-        if not (d.isdigit() and len(d) == 8):
-            raise ValueError("区间日期须为 8 位 YYYYMMDD, 当前 %r" % d)
-    if parts[0] > parts[1]:
-        raise ValueError("区间起始 %s 不应大于结束 %s" % (parts[0], parts[1]))
-    return parts
+        raise ValueError("区间须为两元素 起,止, 如 2026-03-12,2026-04-30(或 YYYYMMDD), 当前 %r" % text)
+    norm = [date_utils.parse_date(d, what="range") for d in parts]
+    if norm[0] > norm[1]:
+        raise ValueError("区间起始 %s 不应大于结束 %s" % (norm[0], norm[1]))
+    return norm
 
 
 def _build_cfg(args: argparse.Namespace) -> dict:
@@ -60,7 +60,7 @@ def _build_cfg(args: argparse.Namespace) -> dict:
     if args.features:
         features = [c.strip() for c in args.features.split(",") if c.strip()]
 
-    id_cols: List[str] = [c.strip() for c in (args.id_cols or "user_no").split(",") if c.strip()]
+    id_cols: List[str] = [c.strip() for c in (args.id_cols or "fuid").split(",") if c.strip()]
 
     if args.mode == "local_file":
         # local_file 模式: 不走 spark, hdfs_base 留空, sample_table 占位
@@ -183,19 +183,19 @@ def main() -> None:
     parser.add_argument("--mode", choices=["spark", "local_file"], default="spark",
                         help="取数模式: spark=走 spark-submit 拉 your_db 表; local_file=shutil.copyfile 本地 parquet")
     parser.add_argument("--local-parquet-path", default=None,
-                        help="[mode=local_file 必填] 本地 parquet 路径, 含 id_cols+label_col+dt_col+(可选)features")
+                        help="[mode=local_file 必填] 本地样本文件路径(.parquet/.csv/.feather), 含 id_cols+label_col+dt_col+(可选)features")
     parser.add_argument("--sample-table", default=None,
                         help="样本表 库.表, 如 your_db.xxx (spark 模式必填, local_file 模式仅记录用)")
-    parser.add_argument("--fetch-start", default=None, help="取数起始日期 YYYYMMDD (spark 模式必填)")
-    parser.add_argument("--fetch-end", default=None, help="取数结束日期 YYYYMMDD (spark 模式必填)")
-    parser.add_argument("--train-range", required=True, help="Train pday 闭区间 起,止 (YYYYMMDD)")
-    parser.add_argument("--test-range", required=True, help="Test pday 闭区间 起,止 (YYYYMMDD)")
-    parser.add_argument("--oot-range", required=True, help="OOT pday 闭区间 起,止 (YYYYMMDD)")
+    parser.add_argument("--fetch-start", default=None, help="取数起始日期 YYYY-MM-DD(兼容 YYYYMMDD) (spark 模式必填)")
+    parser.add_argument("--fetch-end", default=None, help="取数结束日期 YYYY-MM-DD(兼容 YYYYMMDD) (spark 模式必填)")
+    parser.add_argument("--train-range", required=True, help="Train 日期闭区间 起,止 (YYYY-MM-DD, 兼容 YYYYMMDD)")
+    parser.add_argument("--test-range", required=True, help="Test 日期闭区间 起,止 (YYYY-MM-DD, 兼容 YYYYMMDD)")
+    parser.add_argument("--oot-range", required=True, help="OOT 日期闭区间 起,止 (YYYY-MM-DD, 兼容 YYYYMMDD)")
     parser.add_argument("--label-col", default="label", help="标签列名 (默认 label)")
     parser.add_argument("--label-expr", default=None, help="SQL 标签表达式, 非空时替代 --label-col")
     parser.add_argument("--features", default=None, help="补充字段清单(逗号分隔), 不直接入模; 留空=仅样本三列")
-    parser.add_argument("--id-cols", default="user_no", help="ID 列(逗号分隔), 默认 user_no")
-    parser.add_argument("--dt-col", default="pday", help="日期分区字段, 默认 pday")
+    parser.add_argument("--id-cols", default="fuid", help="ID 列(逗号分隔), 默认 fuid")
+    parser.add_argument("--dt-col", default="f_p_date", help="日期分区字段, 默认 f_p_date")
     parser.add_argument("--where", default=None, help="可选客群筛选条件")
     parser.add_argument("--version", default="v1", help="模型版本, 默认 v1")
     parser.add_argument("--hdfs-base", default=None, help="HDFS 中间目录, 默认 /user/<whoami>/feature-matching")
@@ -213,7 +213,12 @@ def main() -> None:
         if not args.local_parquet_path:
             raise SystemExit("--mode local_file 时必须传 --local-parquet-path")
         if not os.path.isfile(args.local_parquet_path):
-            raise SystemExit("本地 parquet 不存在: %s" % args.local_parquet_path)
+            raise SystemExit("本地样本文件不存在: %s" % args.local_parquet_path)
+        _ext = os.path.splitext(args.local_parquet_path)[1].lower()
+        if _ext not in (".parquet", ".csv", ".feather"):
+            raise SystemExit(
+                "本地样本文件扩展名不支持: %s, 仅支持 .parquet / .csv / .feather" % _ext
+            )
     else:  # spark 模式必填校验
         if not args.sample_table:
             raise SystemExit("--mode spark 时必须传 --sample-table")
@@ -312,7 +317,7 @@ def main() -> None:
     if extra_cols:
         print("补充字段(不直接入模): %s" % ", ".join(extra_cols))
     else:
-        print("仅拉样本三列(user_no/label/pday), 无补充字段")
+        print("仅拉样本三列(fuid/label/f_p_date), 无补充字段")
     print("\n提交命令:\n  bash %s\n" % script_path)
     print("脚本内容:\n%s" % script_content)
 

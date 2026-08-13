@@ -86,10 +86,11 @@ def build_command(cfg, out_path, hdfs_out_path=None):
     # 样本表⋈特征表模式: 配置含 feature_table 时启用, 样本表用 sample_table
     feature_table = model.get("feature_table")
     if feature_table:
-        dt_col = model.get("dt_col", "pday")
+        from config_io import JOIN_ID_COL_DEFAULT, JOIN_DATE_COL_FALLBACKS
+        dt_col = model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0])
         from fetch_spark import validate_join_keys
 
-        _jk_raw = model.get("join_keys") or ["user_no", dt_col]
+        _jk_raw = model.get("join_keys") or [JOIN_ID_COL_DEFAULT, dt_col]
         _jk_list = list(_jk_raw) if isinstance(_jk_raw, (list, tuple)) else [
             c.strip() for c in str(_jk_raw).split(",") if c.strip()
         ]
@@ -98,7 +99,7 @@ def build_command(cfg, out_path, hdfs_out_path=None):
             os.path.join(HERE, "fetch_spark.py"),
             "--sample-table", model["sample_table"],
             "--feature-table", feature_table,
-            "--dt-col", model.get("dt_col", "pday"),
+            "--dt-col", dt_col,
             "--fetch-start", str(fetch_dt[0]),
             "--fetch-end", str(fetch_dt[1]),
             "--out", spark_out,
@@ -124,10 +125,11 @@ def build_command(cfg, out_path, hdfs_out_path=None):
         return cmd, out_path, hdfs_out_path
 
     # fetch_spark.py 及其参数(单表模式)
+    from config_io import JOIN_DATE_COL_FALLBACKS
     eval_parts = [
         os.path.join(HERE, "fetch_spark.py"),
         "--table", model["sample_table"],
-        "--dt-col", model.get("dt_col", "pday"),
+        "--dt-col", model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0]),
         "--fetch-start", str(fetch_dt[0]),
         "--fetch-end", str(fetch_dt[1]),
         "--out", spark_out,

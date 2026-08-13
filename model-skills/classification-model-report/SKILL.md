@@ -106,8 +106,8 @@ python <skill_dir>/scripts/build_report.py \
 
 **Sheet 2 特定样式**:
 - 4 个 KV 段 + 2 张附表
-- 附表"分时段样本": 列 pday / 样本量 / 正样本 / 正样本率 / 正负比
-- 附表"Train-Eval-OOT 切分": 列 split / 样本量 / 正样本 / 正样本率 / pday 范围
+- 附表"分时段样本": 列 日期列(默认 f_p_date) / 样本量 / 正样本 / 正样本率 / 正负比
+- 附表"Train-Eval-OOT 切分": 列 split / 样本量 / 正样本 / 正样本率 / 日期列(默认 f_p_date) 范围
 - KV 与附表之间仅 1 行空行间隔(`_write_kv_sheet` 返回 `next_row`, 调用方 `cur_row = next_row + 1` 定位, 不依赖 `ws.max_row` — 后者在 KV 只填 A:B 两列时会被 openpyxl 虚报)
 - **不画 DataBar**(纯数值, 与其他 sheet 区分)
 
