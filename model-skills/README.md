@@ -111,7 +111,7 @@ model-task-routing（一次性提问 Q1/Q2/Q3 → 评估需求是否为 classifi
 | 场景 | 前置数据 |
 |---|---|
 | 分类建模 | 一份含 `id + 特征列 + label`（可含日期列）的 parquet/csv/feather |
-| 分类建模（演示） | 内置演示数据 `data/demo/credit_risk_demo.csv`（1000 行 × 18 列，A 卡申请评分卡风格，含 `apply_date`/`is_bad`，坏率 9.6%，含少量缺失值），可先跑通全流程再替换真实数据 |
+| 分类建模（演示） | 自备一份含 `id + 特征列 + label`（可含日期列）的小型 parquet/csv/feather 即可跑通全流程再替换真实数据 |
 
 ## 使用说明
 
@@ -201,7 +201,7 @@ runs/20260624-114630-draw_willingness/
    - 涉及关键决策的 skill 须声明走「关键决策确认门禁」对应节点
 3. **命名约定**：classification 专属加 `classification-` 前缀、跨流程共享不加前缀
 4. **公共代码**：优先复用 `_modelevo-shared`（config_io 配置读写 + 数据安全红线），不重复造轮子
-5. **校验 + 注册**：`validate_expert.py` → `register_expert.py`，禁止直接改 `marketplace.json`
+5. **校验 + 注册**：用平台 **expert-manager** 插件脚本 `validate_expert.py` → `register_expert.py`（位于 `~/.workbuddy/plugins/marketplaces/workbuddy-builtin/skills/expert-manager/scripts/`），禁止直接改 `marketplace.json`
 
 ### 接入 MCP 数据源 / 外部服务的契约
 

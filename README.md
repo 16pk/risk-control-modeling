@@ -46,16 +46,19 @@ risk-control-modeling/
 
 ## 安装 / 导入
 
-将本专家包解压到专家目录后注册即可：
+本专家包按 WorkBuddy/CodeBuddy 专家规范（`.codebuddy-plugin/plugin.json`）组织。将其解压到专家目录后，用 **expert-manager 平台插件**（内置 `skill-expert-manager`）的脚本校验并注册：
 
 ```bash
-python3 scripts/register_expert.py <expert-dir> --session-id <session-id>
+# 平台插件脚本位于 ~/.workbuddy/plugins/marketplaces/workbuddy-builtin/skills/expert-manager/scripts/
+python3 ~/.workbuddy/plugins/marketplaces/workbuddy-builtin/skills/expert-manager/scripts/register_expert.py <expert-dir> --session-id <session-id>
 ```
+
+> 注：`register_expert.py` / `validate_expert.py` / `package_expert.py` 属于平台 expert-manager 插件，**不在本仓库**。需要完整工作流时调用 `expert-manager` skill（触发词：创建/导入/修改/校验/打包专家）。
 
 `model-skills/` 内的技能会随专家一并被加载，无需单独安装。
 
 ## 打包分享
 
 ```bash
-python3 scripts/package_expert.py <expert-dir> [output-dir]
+python3 ~/.workbuddy/plugins/marketplaces/workbuddy-builtin/skills/expert-manager/scripts/package_expert.py <expert-dir> [output-dir]
 ```

@@ -1,7 +1,7 @@
 # ---- 运行态 / IDE 数据（非源码） ----
 .codebuddy/
 .workbuddy/
-runs/
+runs
 
 # ---- Python 缓存 / 字节码 ----
 __pycache__/
