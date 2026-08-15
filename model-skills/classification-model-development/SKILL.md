@@ -1,6 +1,6 @@
 ---
 name: classification-model-development
-description: 模型开发总控。在 orchestration 用户确认建模后调起，按迭代式流程串联 classification-model-training / classification-model-tuning / classification-model-comparison 三个 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、无上游 session 时的历史 session 列举与新建。触发词：开发模型、跑 baseline、调参、多模型对比、列历史 session。
+description: 模型开发总控。在 orchestration 用户确认建模后调起，按迭代式流程串联 feature-analysis / classification-model-training / classification-model-tuning / classification-model-comparison / model-scoring / score-to-fico 等 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、无上游 session 时的历史 session 列举与新建。触发词：开发模型、跑 baseline、调参、多模型对比、列历史 session。
 ---
 
 # 模型开发总控（classification-model-development）
@@ -9,12 +9,13 @@ description: 模型开发总控。在 orchestration 用户确认建模后调起�
 
 你是开发阶段的总调度,**不是工程师**。本 skill 只编排 4 个 sub-skill 已有的 CLI,外加一个 session 决议工具 `list_sessions.py`(扫描 `runs/` 下历史 sessions 供用户选择):
 - 上游: `classification-model-orchestration` Step 5 在用户选"是"后调起本 skill,传入 `session_dir` 及各上游产物路径。
-- 下游: 5 个 sub-skill
+- 下游: 6 个 sub-skill
   0. `feature-analysis` — 特征质量分析(IV/PSI/基础统计,一次性必跑)
   1. `classification-model-training` — baseline 训练(8-stage 产物管线)
   2. `classification-model-tuning` — 特征筛选 / 超参调优迭代
   3. `classification-model-comparison` — session 级 N-way 横向对比
-  4. `score-to-fico` — 收口后概率分 → FICO 标准分转换(Stage 5,对 top1 上线候选 run 转分)
+  4. `model-scoring` — 定版模型打分(Stage 5,对清洗后 sample.parquet 跑推理产出违约概率分)
+  5. `score-to-fico` — 收口后概率分 → FICO 标准分转换(Stage 6,可选)
 
 你不替代任何 sub-skill 的内部逻辑,只负责:**何时跑哪个、读哪些产物、问用户什么决策、怎么写回 report.md、怎么断点续跑**。
 
@@ -22,7 +23,7 @@ description: 模型开发总控。在 orchestration 用户确认建模后调起�
 
 ## 2. 输入契约(从 orchestration 接力)
 
-启动时**先验证**这 6 项都存在,缺任一 → 报错并指明缺哪个、上游哪个 skill 该补。
+启动时**先验证**这 4 项都存在,缺任一 → 报错并指明缺哪个、上游哪个 skill 该补。
 (feature-analysis 产物不在此校验 — 它是本 skill Stage 0 自产,见 3. 节)
 
 | 输入 | 路径 | 来源 skill |
@@ -30,9 +31,7 @@ description: 模型开发总控。在 orchestration 用户确认建模后调起�
 | `session_dir` | `runs/{timestamp}-{model_name}/` | orchestration Step 2(或本 skill 2.1 节 session 决议新建) |
 | 需求文档 | `task-spec/task-spec.md` + `_manifest.json` | classification-model-task-spec |
 | 样本分析 | `data-profile/_manifest.json` | classification-model-task-spec |
-| 特征宽表 | `sample-features/feature-matching/sample.parquet` + `feature-list.csv` | feature-matching (spark 模式 / local_file 模式均产, 路径一致) |
-| 历史推荐 | `model-recommend/{model_id}/`(含 `evaluation/` 三档 eval JSON) | classification-model-recommend (**local_file 模式下无此产物, 跳过 recommend**; Stage 1 baseline 不对齐历史 baseline) |
-| base 对比列 | `model-recommend/{model_id}/evaluation/` 或 yaml `model.baseline_eval_dir` | classification-model-recommend (**local_file 模式下无此产物**; Stage 1 baseline 不做 base 对比) |
+| 特征宽表 | `sample-features/data-cleaning/sample.parquet` + `feature-list.csv` | data-cleaning (清洗后样本 + 派生特征清单) |
 
 ### 2.1 Session 决议(无上游 session 时由本 skill 负责)
 
@@ -76,14 +75,56 @@ Stage 2: 迭代决策点 (loop, 可重复 0~N 次)
    └─ 2c: 换算法 → 新 algo run (回到 Stage 1, 用不同 model.algo)
 Stage 3: session-level comparison (auto, 由 run_build 触发)
    ↓ 产 model-comparison/model-comparison_{split}.{json,md,xlsx} × 2 (oot, all) + 对比报告.{json,md,xlsx} + _manifest.json
-Stage 4: 收口 — 回填 report.md 第七段, 询问用户是否上线候选; 上线候选填入附录「待处理项」
-Stage 5: FICO 转换 (score-to-fico, 收口后**总是询问**)
-   ↓ 用户确认后对 top1 上线候选 run 做概率分 → FICO 标准分转换
-   ↓ 产 new-models/{run}/fico/{coef.json, fico_{train,test,oot}_predictions.parquet, fitting-summary.{json,md}}
+Stage 4: 收口 — 回填 report.md 第七段, 询问用户是否上线候选; 上线候选确认后落 finalized_model.json
+Stage 5: model-scoring (定版模型打分, 收口后**总是询问**)
+   ↓ 用户确认后用定版模型对清洗后 sample.parquet 跑推理产出违约概率分 score
+   ↓ 产 scoring/score_sample.parquet (透传所有非特征列 + score 列)
+Stage 6: score-to-fico (概率分 → FICO 标准分, **可选**, 收口后**总是询问**)
+   ↓ 用户确认后对 scoring 打分结果拟合校准转 FICO(默认全量样本+Y拟合, 可改拟合时间范围/标签)
+   ↓ 产 fico/{coef.json, fico_predictions.parquet, fitting-summary.{json,md}}
    ↓ FICO 转换结果追加 report.md 附录「待处理项」
 ```
 
 **关键: Stage 2 是 loop,不是单次。** 每个 run 完成后都问用户"继续迭代 / 换路子 / 停下对比",不自动推进。
+
+## 3.5 编排模式裁决(先裁决,再调度)
+
+除 §3 Gateway 的 `engine.ruling` 门禁(分布式/本地)外,启动时还要裁决**编排深度**:默认走**完整编排**(§3 全 Stage 流水);仅当满足精简条件时启用**精简编排模式**(§3.6)。裁决依据如下决策表:
+
+| 维度 | 走完整编排 | 走精简编排 |
+|------|-----------|-----------|
+| 数据体检 | 新数据 / 未体检 | 已体检(credit-data-analysis 或上游已产) |
+| 用户决策 | 需多模型对比 / 调参迭代 / 特征再筛选 | 用户明确"按默认 / 简化"(单算法 + 默认参数 + 沿用特征) |
+| 产物规范 | 需严格产物规范(归档 / 上报 / 复盘) | 快速验证 / 临时探索 |
+| 复用诉求 | 需跨 run 对比 / N-way 对比 | 单一算法单 run 即可 |
+
+**裁决权在用户,不在 agent**:编排深度必须经 §5 决策点确认,agent 不得自行裁定。即使走精简模式,**也必须调用本总控**并以参数显式声明跳过项(§3.6),禁止绕过总控自写脚本散落执行。
+
+## 3.6 精简编排模式(轻量快速通道)
+
+**原则:轻量与规范兼得。** 精简不是绕开总控,而是在总控内用参数显式声明跳过项——产物目录、`record_stage`、`_manifest.json` 断点续跑机制全部保留。
+
+**启用方式**:用户在决策点明确"按默认 / 简化"时,以参数化声明记录本次编排模式(本 skill 为 agent 编排层、无 Python CLI,`--skip-*` 是编排指令约定:写入 `_manifest.json` 的 `skipped_stages`,并在 report.md 附录注明):
+
+```
+精简编排模式: --algo xgb --skip-tuning --skip-comparison
+```
+
+| 参数 | 含义 | 跳过项 |
+|------|------|--------|
+| `--algo {xgb\|dnn\|lr\|seg}` | 固定算法,跳过换算法询问 | Stage 2c |
+| `--skip-tuning` | 跳过超参调优(Optuna / 规则) | Stage 2b |
+| `--skip-feature-selection` | 跳过特征筛选(沿用上游特征) | Stage 2a |
+| `--skip-comparison` | 跳过 session 级 N-way 对比 | Stage 3 |
+| `--skip-fico` | 跳过 FICO 转换询问 | Stage 6(询问仍走,用户否即跳过) |
+
+**规则(强制)**:
+1. 精简模式**仍按 Stage 流水调度**:跳过项不执行,但必须写入 `_manifest.json` 的 `skipped_stages`(含理由,如"用户决策跳过"),并在 report.md 附录「待处理项」注明,保证链路完整性可追溯。
+2. **底线不可跳过**:Gate P0 裁决、数据准备(data-cleaning 用户+日期去重)、Stage 1 baseline 训练、Stage 5 打分询问、`record_stage` 记录、report.md 回填。精简模式同样必须执行。
+3. **断点续跑(§7)**:读取 `skipped_stages`,跳过项不补跑、不重复询问。
+4. 精简模式的产物三件套(JSON + MD + XLSX)与 `record_stage` 快照照常产出。
+
+> ⚠️ 复盘教训(ka_df run):用户"按默认"不代表可以绕过总控自写脚本——漏掉 data-cleaning 去重工序(5,339 条重复样本未剔除)与标准产物(cleaning-scheme.json)。精简模式的意义正是**以显式声明保留规范性**。
 
 ## 4. 路径接力契约(强制)
 
@@ -91,14 +132,15 @@ Stage 5: FICO 转换 (score-to-fico, 收口后**总是询问**)
 
 | 阶段 | 读 | 写 | 接力 CLI | report.md 回填 |
 |------|----|----|---------|---------------|
-| Stage 0 | `sample-features/feature-matching/sample.parquet` + `feature-list.csv` | `sample-features/feature-analysis/analysis/{report.md,stats,iv_table,psi_table}.csv` + `_manifest.json` + `sample-features/splits/{train,test,oot}.parquet` | `python feature-analysis/scripts/run_analysis.py --config <session_dir>/sample-features/feature-analysis/feature_config.yaml --data_path <session_dir>/sample-features/feature-matching/sample.parquet --output_dir <session_dir>/sample-features/feature-analysis/analysis` | `--section V` |
-| Stage 1 | `sample-features/feature-matching/sample.parquet` + `feature-list.csv`(全量) | `new-models/{algo}-v{N}/{config,features,model,evaluation,predictions,explainability,comparison,logs}/` | `python classification-model-training/scripts/run_build.py --config <train_config.yaml> --output_dir <session_dir> --version v1` | `--section VI`(追加新 run 行) |
+| Stage 0 | `sample-features/data-cleaning/sample.parquet` + `feature-list.csv` | `sample-features/feature-analysis/analysis/{report.md,stats,iv_table,psi_table}.csv` + `_manifest.json` + `sample-features/splits/{train,test,oot}.parquet` | `python feature-analysis/scripts/run_analysis.py --config <session_dir>/sample-features/feature-analysis/feature_config.yaml --data_path <session_dir>/sample-features/data-cleaning/sample.parquet --output_dir <session_dir>/sample-features/feature-analysis/analysis` | `--section V` |
+| Stage 1 | `sample-features/data-cleaning/sample.parquet` + `feature-list.csv`(全量) | `new-models/{algo}-v{N}/{config,features,model,evaluation,predictions,explainability,comparison,logs}/` | `python classification-model-training/scripts/run_build.py --config <train_config.yaml> --output_dir <session_dir> --version v1` | `--section VI`(追加新 run 行) |
 | Stage 2a | baseline run dir + `sample-features/feature-analysis/analysis/{stats,iv_table,psi_table}.csv` | `new-models/{algo}-feat-v{N}/` | `python classification-model-tuning/scripts/select_features.py --baseline_run <baseline_run_dir> --analysis_dir <session_dir>/sample-features/feature-analysis/analysis` | `--section VI` |
 | Stage 2b | baseline run dir | `new-models/{algo}-tuned-v{N}/` | `python classification-model-tuning/scripts/run_tuning.py --baseline_run <baseline_run_dir> [--method rule\|optuna]` | `--section VI` |
-| Stage 2c | `sample-features/feature-matching/` + `feature-list.csv` | `new-models/{new_algo}-v{N}/` | 改 yaml `model.algo: dnn\|lr\|seg` 后重跑 Stage 1 的 `run_build.py` | `--section VI` |
-| Stage 3 | `new-models/*/evaluation/*_{split}_eval.json` + `model-recommend/*/evaluation/` | `model-comparison/model-comparison_{split}.{json,md,xlsx}` × 2 (oot, all) + `对比报告.{json,md,xlsx}` + `_manifest.json` | **自动**: `run_build.py` 末尾调 `invoke.session_aggregate.invoke_session_aggregate(output_dir)`; 也可手动跑 `python classification-model-comparison/scripts/aggregate_session_comparison.py --session-dir <session_dir>` | `--section VII` |
-| Stage 4 | (无新产物) | `report.md` 附录「待处理项」(人工填写上线候选) | (人工填写上线候选) | — (脚本不回填附录) |
-| Stage 5 | `new-models/{run}/predictions/{train,test,oot}_predictions.parquet`(top1 上线候选 run) | `new-models/{run}/fico/{coef.json, fico_{split}_predictions.parquet, fitting-summary.{json,md}}` | `python score-to-fico/scripts/score_to_fico.py --from-run --run-dir <run_dir>` | FICO 结果追加附录「待处理项」(coef/intc + bscore 范围 + 产物路径) |
+| Stage 2c | `sample-features/data-cleaning/` + `feature-list.csv` | `new-models/{new_algo}-v{N}/` | 改 yaml `model.algo: dnn\|lr\|seg` 后重跑 Stage 1 的 `run_build.py` | `--section VI` |
+| Stage 3 | `new-models/*/evaluation/*_{split}_eval.json` | `model-comparison/model-comparison_{split}.{json,md,xlsx}` × 2 (oot, all) + `对比报告.{json,md,xlsx}` + `_manifest.json` | **自动**: `run_build.py` 末尾调 `invoke.session_aggregate.invoke_session_aggregate(output_dir)`; 也可手动跑 `python classification-model-comparison/scripts/aggregate_session_comparison.py --session-dir <session_dir>` | `--section VII` |
+| Stage 4 | `new-models/{run}/model/model_meta.json`(top1 上线候选 run) | session 根 `finalized_model.json`(run_name/algo/model_path/feature_names/oot_auc) | `python model-scoring/scripts/mark_finalized.py --session-dir <session_dir> --run-name {run} [--oot-auc x]` | 上线候选 + 定版标记路径追加附录「待处理项」 |
+| Stage 5 | `finalized_model.json` + `sample-features/data-cleaning/sample.parquet` | `scoring/score_sample.parquet`(透传非特征列 + score 列) | `python model-scoring/scripts/score_data.py --model-path <session_dir>/new-models/{run}/model --data <session_dir>/sample-features/data-cleaning/sample.parquet --out <session_dir>/scoring/score_sample.parquet` | 打分结果(score 范围)追加附录「待处理项」 |
+| Stage 6 | `scoring/score_sample.parquet`(含 label + score) | `fico/{coef.json, fico_predictions.parquet, fitting-summary.{json,md}}` | `python score-to-fico/scripts/score_to_fico.py --data <session_dir>/scoring/score_sample.parquet --out-dir <session_dir>/fico [--fit-label-col ... --fit-date-range ...]` | FICO 结果(coef/intc + bscore 范围 + 产物路径)追加附录「待处理项」 |
 
 **baseline run dir 决议**: Stage 2a/2b 默认用 `new-models/` 下最新一版 run(按 timestamp 排序)。若用户指定其他 baseline,以用户指定为准。
 
@@ -127,7 +169,9 @@ python model-skills/_modelevo-shared/scripts/record_stage.py \
 | Stage 2a | `classification-model-tuning/scripts/select_features.py` | `tuning` | 特征筛选 |
 | Stage 2b | `classification-model-tuning/scripts/run_tuning.py` | `tuning` | 超参调优 |
 | Stage 3(手动跑时) | `classification-model-comparison/scripts/aggregate_session_comparison.py` | `comparison` | 横向对比 |
-| Stage 5 | `score-to-fico/scripts/score_to_fico.py` | `fico` | FICO 转分 |
+| Stage 4 | `model-scoring/scripts/mark_finalized.py` | `finalize` | 定版标记 |
+| Stage 5 | `model-scoring/scripts/score_data.py` | `scoring` | 定版模型打分 |
+| Stage 6 | `score-to-fico/scripts/score_to_fico.py` | `fico` | FICO 转分 |
 
 说明:
 - `--cmd` 传**实际执行的那条命令原样**(含全部参数,建议 shell 单引号包裹);`--label` 帮助区分同一 stage 的多次记录(如 `-feat` / `-tuned` 迭代)。
@@ -137,7 +181,7 @@ python model-skills/_modelevo-shared/scripts/record_stage.py \
 
 ## 5. 决策点话术(强制,每个阶段后必问)
 
-> **决策点必问**: 每个 Stage 完成后都向用户询问下一步(Stage 0~4 决策点 + Stage 5 FICO 转换),不自动推进;下方话术在每个阶段后触发。
+> **决策点必问**: 每个 Stage 完成后都向用户询问下一步(Stage 0~4 决策点 + Stage 5 打分 + Stage 6 FICO 转换),不自动推进;下方话术在每个阶段后触发。
 
 > **distributed 守卫**：`engine.ruling=="distributed"` 时本小节（以及下述 Stage 0 / 2a 相关话术）整体跳过 —— 无本地特征分析产物可汇报，直接走 ray-distributed-train。
 
@@ -166,17 +210,26 @@ python model-skills/_modelevo-shared/scripts/record_stage.py \
 ```
 > 共跑 {N} 个 run, session-level 对比在 model-comparison/。
 > Top 候选(按 oot AUC): {列表}
-> 是否标记上线候选? 或继续迭代?
+> 是否标记上线候选? 确认后落定版标记 finalized_model.json。
 ```
 
-**Stage 5 FICO 转换**(收口后, **总是询问**):
+**Stage 5 model-scoring**(收口后, **总是询问**):
 ```
-> 已确认上线候选 {run_name}(oot AUC={x})。是否将概率分转换为 FICO 标准分(范围约 [400,780], 分高险低)?
->   A. 是, 转换 (对 {run_name} 跑 score-to-fico: train 拟合校准, test/oot 转分, 产 {run}/fico/)
->   B. 否, 跳过 (产物保留概率分; 后续随时可手动补转)
+> 已确认上线候选 {run_name}(oot AUC={x}), 已落定版标记 finalized_model.json。
+> 是否用定版模型对清洗后数据打分(产出违约概率分 score)?
+>   A. 是, 打分 (对 {run_name} 跑 model-scoring, 输入 sample.parquet, 产 scoring/score_sample.parquet)
+>   B. 否, 跳过 (后续随时可补打)
 ```
 
-话术是示例,不是脚本 — agent 可根据上下文调整措辞,但**必问的决策点不能省**(Stage 5 总是询问)。
+**Stage 6 FICO 转换**(可选, **总是询问**):
+```
+> 已产出打分结果 scoring/score_sample.parquet。是否将概率分转换为 FICO 标准分(范围约 [400,780], 分高险低)?
+>   默认用全量样本 + label 拟合校准参数; 如需调整拟合样本时间范围或拟合标签, 请一并告知。
+>   A. 是, 转换 (跑 score-to-fico: 拟合校准 + 转分, 产 fico/)
+>   B. 否, 跳过 (产物保留概率分; 后续随时可补转)
+```
+
+话术是示例,不是脚本 — agent 可根据上下文调整措辞,但**必问的决策点不能省**(Stage 5 / Stage 6 总是询问)。
 
 ## 6. report.md 回填契约(强制)
 
@@ -190,7 +243,7 @@ python classification-model-development/scripts/fill_report.py \
 
 脚本从 `session_dir` 下各 sub-skill 产出的 manifest/JSON/CSV 中提取信息,幂等更新段落(用 H2 锚点切分替换,多次调用结果一致)。`--section` 仅接受 IV/V/VI/VII/all,不支持「八、建模决策」(该内容归附录「待处理项」,由 Stage 4 人工填写)。
 
-> 第四段(特征宽表)由 `classification-model-orchestration` Step 4B 回填;第五段(特征分析)/六~七段由本 skill 触发回填;附录「待处理项」由 Stage 4 人工填写(脚本不接管)。
+> 第三段(特征宽表)由 `classification-model-orchestration` Step 4B 回填;第四段(特征分析)/五~六段由本 skill 触发回填;附录「待处理项」由 Stage 4 人工填写(脚本不接管)。
 
 **最终校验(收口门禁, 必跑)**: 所有回填(`fill_report.py` + Stage 4/Stage 5 手动填写)完成后、宣布收口交付前,**必须**运行 render-check 做最后一道数字一致性校验 —— 把「进报告的数字必须源自产物文件、绝不手敲」固化成机器判据(复盘事故 B 的结构化护栏)。任一 FAIL/WARN 未清零一律视为未完成收口:
 ```bash
@@ -200,14 +253,14 @@ python ../_modevo-shared/bin/render-check/render_check.py \
     [--expect-kava-dev <dev AUC>]      # ka_v4 统一口径重测 dev 期望值,报告含该对照表时才传
     [--expect-kava-oot <OOT AUC>]      # 同上,OOT 期望值
 ```
-退出码:`0`=一致可交付 / `1`=FAIL(WARN 默认亦算失败,可用 `--no-fail-on-warn` 降级) / `2`=缺 report.md 无法自检。三族白名单断言(其余自由文本不作数值比对,避免误报淹没真实冲突):①迭代/N-way 表的每行 train/test AUC·KS ↔ `new-models/{run}/evaluation/*_{split}_eval.json` → `metric_by_segment.全量`;②标题含 `ka_v4` 且带「统一口径」的对照表 dev/OOT 两行 ↔ `--expect-kava-*`(容差 ±0.005,吸收跨批次口径微差);③FICO bscore 摘要行(`- \`train\`: n=… | bscore 范围=[a,b] | 均值=c`)↔ `fico/fitting-summary.json`。**为让第③族能自动核对,FICO 摘要必须采用上述固定行格式**书写(见 `score-to-fico`, Stage 5)。
+退出码:`0`=一致可交付 / `1`=FAIL(WARN 默认亦算失败,可用 `--no-fail-on-warn` 降级) / `2`=缺 report.md 无法自检。三族白名单断言(其余自由文本不作数值比对,避免误报淹没真实冲突):①迭代/N-way 表的每行 train/test AUC·KS ↔ `new-models/{run}/evaluation/*_{split}_eval.json` → `metric_by_segment.全量`;②标题含 `ka_v4` 且带「统一口径」的对照表 dev/OOT 两行 ↔ `--expect-kava-*`(容差 ±0.005,吸收跨批次口径微差);③FICO bscore 摘要行(`- \`full\`: n=… | bscore 范围=[a,b] | 均值=c`)↔ `fico/fitting-summary.json` 的 `fit` 段。**为让第③族能自动核对,FICO 摘要必须采用上述固定行格式**书写(见 `score-to-fico`, Stage 6)。
 
 | 段落 | 何时写 | 内容来源 |
 |------|--------|---------|
-| 四、特征宽表 | **orchestration Step 4B 回填**,本 skill 不触发 | 特征数 / 三档样本量(从 `sample-features/splits/{train,test,oot}.parquet`(主) 或 `data-profile/_split_manifest.json`(fallback) 取) |
-| 五、特征分析 | **本 skill Stage 0 回填**,orchestration 不触发 | IV Top10 / PSI>0.10 列表 / 高缺失率列表(从 `feature-analysis/analysis/{iv_table,psi_table,stats}.csv` 取)。**ruling=distributed 时此段写「分布式特征分析留待未来开发」** —— 这是有意义的工程记录（非未完成占位），与「禁止 (待…执行) 占位」不冲突 |
-| 六、模型迭代 | 每个 run 完成后 | run_name / algo / 三档 AUC / 关键变更(从 `new-models/*/config.json.runtime` 取,自动识别 baseline / -feat / -tuned) |
-| 七、横向对比 | Stage 3 完成后 | 对比表摘要(从 `model-comparison/model-comparison_oot.json` 的 `auc_comparison["全量"]` 取,按 AUC 降序) |
+| 三、特征宽表 | **orchestration Step 4B 回填**,本 skill 不触发 | 特征数 / 三档样本量(从 `sample-features/splits/{train,test,oot}.parquet` 取, 切分唯一真相 = feature-analysis) |
+| 四、特征分析 | **本 skill Stage 0 回填**,orchestration 不触发 | IV Top10 / PSI>0.10 列表 / 高缺失率列表(从 `feature-analysis/analysis/{iv_table,psi_table,stats}.csv` 取)。**ruling=distributed 时此段写「分布式特征分析留待未来开发」** —— 这是有意义的工程记录（非未完成占位），与「禁止 (待…执行) 占位」不冲突 |
+| 五、模型迭代 | 每个 run 完成后 | run_name / algo / 三档 AUC / 关键变更(从 `new-models/*/config.json.runtime` 取,自动识别 baseline / -feat / -tuned) |
+| 六、横向对比 | Stage 3 完成后 | 对比表摘要(从 `model-comparison/model-comparison_oot.json` 的 `auc_comparison["全量"]` 取,按 AUC 降序) |
 | 附录「待处理项」 | Stage 4 完成后 | 上线候选 / 下一步建议(**人工填写**,脚本不接管) |
 
 ## 7. 断点续跑
@@ -221,9 +274,12 @@ python ../_modevo-shared/bin/render-check/render_check.py \
 | 非 distributed 且 feature-analysis manifest 存在但 `new-models/` 为空 | Stage 1 待跑 |
 | `new-models/` 非空但 `model-comparison/_manifest.json` 不存在 | Stage 2 迭代中,问用户继续迭代还是收口 |
 | `model-comparison/_manifest.json` 存在 | Stage 3 已完成,问用户是否收口 |
-| 收口已完成,但 top1 上线候选 run 无 `fico/` 产物(缺 `fico/fitting-summary.json`) | Stage 5 待跑,问用户是否 FICO 转换 |
+| 收口已完成且 `finalized_model.json` 存在,但 `scoring/score_sample.parquet` 不存在 | Stage 5 待跑,问用户是否定版模型打分 |
+| `scoring/score_sample.parquet` 存在,但 `fico/fitting-summary.json` 不存在 | Stage 6 待跑,问用户是否 FICO 转换 |
 
 向用户回显"当前进度: Stage X,下一步: Stage Y",确认后从断点继续。**不要**因为 manifest 存在就跳过对应阶段 — 只在用户明确说"从 Stage X 继续"时跳过。
+
+**精简编排模式(§3.6)**:若 `_manifest.json` 含 `skipped_stages`,对应 Stage 记为「用户决策跳过」,不进入待跑推断、不补跑、不重复询问;未跳过的 Stage 按上表正常推断。
 
 ## 8. 多算法切换
 
@@ -240,19 +296,22 @@ Stage 2c 换算法时:
 - **输入**: orchestration Step 5 传入 `session_dir` + 各上游产物路径(不含 `feature-analysis/` 产物 — 由本 skill Stage 0 自产)
 - **输出**: development 结束时, `session_dir` 下完整包含:
   - `task-spec/` + `data-profile/`(上游已产,本 skill 不动)
-  - `model-recommend/`(上游已产,本 skill 不动)
-  - `sample-features/feature-matching/`(上游已产,本 skill 不动)
+  - `sample-features/data-cleaning/`(上游已产,本 skill 不动)
   - `sample-features/feature-analysis/`(本 skill Stage 0 产)
   - `sample-features/splits/`(本 skill Stage 0 产)
-  - `new-models/`(Stage 1 + Stage 2 产; Stage 5 FICO 转换产物 `{run}/fico/` 也在其中)
+  - `new-models/`(Stage 1 + Stage 2 产)
+  - `finalized_model.json`(Stage 4 收口定版标记)
+  - `scoring/`(Stage 5 model-scoring 打分产物)
+  - `fico/`(Stage 6 score-to-fico 转换产物)
   - `model-comparison/`(Stage 3 产)
   - `scripts/`(本 skill 各阶段经 4.1 节 `record_stage.py` 记录的「执行命令 + 脚本源码快照」)
-  - `report.md`(全段填充 — 四由 orchestration 回填, 五/六/七由本 skill 回填, 附录「待处理项」由 Stage 4 上线候选 + Stage 5 FICO 结果填写)
-- **结束条件**: 用户在 Stage 4 选"停" 或 所有决策点选"停",且 Stage 5 FICO 询问完成(是→转分完成; 否→明确跳过)
+  - `report.md`(全段填充 — 四由 orchestration 回填, 五/六/七由本 skill 回填, 附录「待处理项」由 Stage 4 上线候选 + Stage 5 打分 + Stage 6 FICO 结果填写)
+- **结束条件**: 用户在 Stage 4 选"停" 或 所有决策点选"停",且 Stage 5 打分 + Stage 6 FICO 询问完成(是→完成; 否→明确跳过)
 
 ## 10. 反模式
 
 - ❌ **自动推进**(不问用户就跑下一阶段)— 决策点必问
+- ❌ **绕过总控自写脚本散落执行** — 即使用户"按默认 / 简化",也必须调本总控并以 `--skip-*` 显式声明跳过(§3.6),保留 `_manifest.json` / `record_stage` / report.md 规范性
 - ❌ **在 development 里写新 Python 脚本** — 复用 sub-skill CLI;本 skill 仅提供 `list_sessions.py`(session 决议工具),不产其他代码
 - ❌ **report.md 留占位** — 阶段完成必填实
 - ❌ **把 development 当成"模型工程脚手架"** — 它是编排器,不是代码生成器
@@ -261,6 +320,5 @@ Stage 2c 换算法时:
 ## 11. 关联 skill
 
 - 上游: `classification-model-orchestration`(Step 5 调起本 skill)
-- 上游依赖: `classification-model-task-spec` / `feature-matching` / `classification-model-recommend`(产 2. 节输入契约中的产物)
-- 下游编排: `feature-analysis`(Stage 0) / `classification-model-training`(Stage 1) / `classification-model-tuning`(Stage 2) / `classification-model-comparison`(Stage 3) / `score-to-fico`(Stage 5, 收口后总是询问)
-- 下游可选: `classification-model-recommend`(run 完成后人工登记到台账)
+- 上游依赖: `classification-model-task-spec` / `data-cleaning`(产 2. 节输入契约中的产物)
+- 下游编排: `feature-analysis`(Stage 0) / `classification-model-training`(Stage 1) / `classification-model-tuning`(Stage 2) / `classification-model-comparison`(Stage 3) / `model-scoring`(Stage 5, 定版模型打分) / `score-to-fico`(Stage 6, 收口后总是询问)

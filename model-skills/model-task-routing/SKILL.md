@@ -143,7 +143,7 @@ Q3. 是否有实验/对照组数据（treatment vs control）？
 
 ## 5. 与其他 skill 关联
 
-- **下游（classification）**：`classification-model-orchestration` —— 接收 `routing_input` JSON，接管分类建模全流程（task-spec / recommend / feature-matching / development）
+- **下游（classification）**：`classification-model-orchestration` —— 接收 `routing_input` JSON，接管分类建模全流程（task-spec / data-cleaning / development）
 - **引擎路由提示**：classification 场景在 task-spec §3.5.1 会做 Gate P0 窗口体量裁决——目标样本预估 ≥1GB 时将转 ray-distributed-train 分布式训练并跳过 Stage0 本地特征分析报告（判据 = config_io.LOCAL_BYTES_LIMIT=1GB，字节口径，已废弃 R×C）。若用户初步提到的源表规模很大（如千万行级宽表），可在需求评估完成前向用户预告此可能性。
 - **无上游**：本 skill 是建模需求评估的守门入口
 

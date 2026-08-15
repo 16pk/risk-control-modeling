@@ -8,11 +8,10 @@
 
 ## 2. 不覆盖(由其他 skill 负责)
 
-- **取数**:用 `feature-matching`(产 sample.parquet)
+- **清洗**:用 `data-cleaning`(产清洗后 sample.parquet)
 - **切分**:用 `feature-analysis`(按 `model.split` 切 train/test/oot,产 `splits/{train,test,oot}.parquet`)
 - **特征分析**:IV/PSI/相关性用 `feature-analysis`,报告仅作人工参考
 - **特征筛选/调参**:用 `classification-model-tuning`(产 `-feat` / `-tuned` 新 run)
-- **历史模型推荐**:用 `classification-model-recommend`
 - **会话级横向对比聚合**:用 `classification-model-comparison`
 
 ## 3. 何时用
@@ -34,7 +33,7 @@
 理由:
 1. 输入 yaml 与 run 一一对应,放 model 内部目录天然绑定 run,不串味
 2. `write_train_config_yaml` 在该目录原地写 `_manifest.json`(含 `source_yaml` 指向自身),不做副本拷贝,避免冗余
-3. 与上游 `task-spec` / `feature-matching` 的 `sample_config.{model_name}.yaml` 落各自子目录的机制对称
+3. 与上游 `task-spec` / `data-cleaning` 的产物落各自子目录的机制对称
 
 `<skill_dir>/config/` 只放 `train_config.example.yaml` 模板,不存实际输入。
 
@@ -52,8 +51,7 @@
 |---|---|
 | 未传 `--data_dir` 且默认路径 `<output_dir>/sample-features/splits/train.parquet` 不存在 | 停止执行,提示先跑 `feature-analysis` 切分 `splits/{train,test,oot}.parquet` 或显式传 `--data_dir` |
 | 配置 yaml 校验失败(`validate_config`) | 停止执行,按报错修正 yaml |
-| baseline 默认扫描无命中 | 跳过 comparison 阶段,不影响主流程 |
-| `model.baseline_eval_dir` 显式为 `null` | 跳过 comparison 阶段(预期行为,不产 `comparison/` 子目录) |
+| `model.baseline_eval_dir` 未配置或为空 | 跳过 comparison 阶段(预期行为,不产 `comparison/` 子目录) |
 | version 含非白名单字符 | 自动归一为 `_`,不报错 |
 | 特征列表为空且未配 `feature_list_source` | 停止执行;不得回退到 optbinning 自动筛选 |
 

@@ -369,7 +369,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                 layout, baseline_eval_dir=str(snap.run_dir / "evaluation"),
                 produced_by=PRODUCED_BY,
             )
-            # 会话级横向对比聚合: 扫 new-models/ + model-recommend/, 刷新 model-comparison/
+            # 会话级横向对比聚合: 扫 new-models/, 刷新 model-comparison/
             from invoke.session_aggregate import invoke_session_aggregate
             invoke_session_aggregate(output_dir, produced_by=PRODUCED_BY)
             write_explainability_stage(

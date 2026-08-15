@@ -1,29 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-风控模型分 → FICO 标准分转换（ModelEvo 专家 skill: score-to-fico）
+score-to-fico: 概率分 → FICO 标准分转换（分类建模 pipeline 内可选 Stage 6）。
+
+仅可在分类建模 pipeline 内调用（classification-model-development Stage 6），
+消费上游 model-scoring（Stage 5）的打分结果（含 label + score 概率列，因
+model-scoring 透传了所有非特征列），默认用全量样本 + Y 标签拟合 LR 校准参数
+（coef/intc），再对全量打分结果转 FICO 标准分。拟合样本时间范围 / 拟合标签
+由编排层在执行前与用户确认后作为参数传入（脚本内不做 input() 交互）。
 
 两步转换:
   Step 1 — LR 校准: odds = ln(p/(1-p)); logistic_prob = sigmoid(coef * odds + intc)
   Step 2 — 标准分:  bscore = 400 - 35/ln2 * ln(logistic_prob / (1 - logistic_prob))  # 范围约 [400,780], 分高险低
 
-三种模式:
-  1. --fit      独立拟合: 输入含 概率列 + 标签列 的 CSV/parquet → coef.json + 打分文件 + 拟合方案
-  2. --apply    独立转分: 输入 概率列 + 已保存 coef.json → 打分文件（无需标签, 批量/生产复用）
-  3. --from-run pipeline 嵌入: 输入 new-models/{run}/predictions/{train,test,oot}_predictions.parquet
-               → {run}/fico/ 下 coef.json + fico_{split}_predictions.parquet + fitting-summary.{json,md}
-
-用法示例:
-  # 拟合 + 转分（独立调用, 输入带标签训练集）
-  python score_to_fico.py --fit --data train.csv --prob_col pred_proba --label_col y \
-      --uid_col user_no --date_col pday --out result_score.parquet --coef_out coef.json
-
-  # 仅转分（复用已保存校准参数, 无需标签）
-  python score_to_fico.py --apply --data new.csv --prob_col pred_proba \
-      --uid_col user_no --date_col pday --coef coef.json --out result_score.parquet
-
-  # pipeline 嵌入（development Stage 5 调起, 消费 training 的 predictions 产物）
-  python score_to_fico.py --from-run --run-dir new-models/lgb-v1
+用法示例(pipeline Stage 6 调起):
+  python score_to_fico.py \
+      --data <session_dir>/scoring/score_sample.parquet \
+      --out-dir <session_dir>/fico \
+      [--prob-col score] [--label-col label] \
+      [--fit-label-col label] [--fit-date-range 20260101,20261231] \
+      [--date-col f_p_date] [--uid-col fuid]
 
 依赖: pandas / numpy / scikit-learn（LogisticRegression）
 """
@@ -59,7 +55,7 @@ def calc_bscore(logistic_prob):
 
 
 def fit_calibration(data, prob_col, label_col):
-    """在训练集上拟合 LR 校准, 返回 coef / intc。仅用 y ∈ {0,1}（剔除标签缺失/未成熟样本）。"""
+    """在拟合集上拟合 LR 校准, 返回 coef / intc。仅用 y ∈ {0,1}（剔除标签缺失/未成熟样本）。"""
     valid = data[data[label_col].isin([0, 1])].copy()
     if len(valid) == 0:
         raise ValueError("[ERROR] 无有效标签样本 (y in {0,1}), 无法拟合校准")
@@ -87,31 +83,51 @@ def apply_scores(data, prob_col, coef, intc):
     return out
 
 
-def load_data(path, prob_col, label_col=None, uid_col=None, date_col=None):
-    """加载 CSV / parquet, 校验必需列（prob + label）；uid/date 为透传列, 缺失不报错"""
+def load_data(path, prob_col):
+    """加载 CSV / parquet, 校验概率列存在。"""
     if str(path).endswith('.parquet'):
         df = pd.read_parquet(path)
     else:
         df = pd.read_csv(path)
-    required = [prob_col] + ([label_col] if label_col else [])
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"[ERROR] 数据缺失必需列: {missing}")
+    if prob_col not in df.columns:
+        raise ValueError(f"[ERROR] 数据缺失概率列: {prob_col}（可用 --prob-col 覆盖）")
     return df
 
 
-def save_data(df, path, cols):
-    """按扩展名保存 CSV / parquet, 只保留指定列"""
-    out = df[cols].copy()
-    if str(path).endswith('.parquet'):
-        out.to_parquet(path, index=False)
-    else:
-        out.to_csv(path, index=False, sep='|')
-    print(f"[SAVE] 输出: {path} | shape={out.shape} | 列: {list(out.columns)}")
+def _to_yyyymmdd(value) -> str:
+    """把日期值(YYYYMMDD 整数 / 'YYYY-MM-DD' / 'YYYYMMDD' 字符串)归一化为 8 位字符串。"""
+    s = str(value).strip().replace('-', '')
+    if len(s) != 8 or not s.isdigit():
+        raise ValueError(f"[ERROR] 日期格式无法归一化为 YYYYMMDD: {value!r}")
+    return s
 
 
-def summarize(prob_col, coef, intc, fit_df=None, splits=None):
-    """组装拟合方案 summary（dict）: 校准参数 + bscore 分布 + 分位表"""
+def _parse_date_range(value):
+    """解析拟合时间范围: 'start,end'(或两元素列表), 返回 (start, end) 8 位字符串。"""
+    parts = [p.strip() for p in str(value).split(',')]
+    if len(parts) != 2:
+        raise ValueError(f"[ERROR] --fit-date-range 须为 'start,end': {value!r}")
+    return _to_yyyymmdd(parts[0]), _to_yyyymmdd(parts[1])
+
+
+def filter_fit_range(df, date_col, fit_date_range):
+    """按日期列过滤拟合样本; 返回过滤后的 DataFrame。"""
+    if not fit_date_range:
+        return df
+    if date_col not in df.columns:
+        raise ValueError(f"[ERROR] --fit-date-range 需要日期列 {date_col!r}, 但数据中不存在（可用 --date-col 覆盖）")
+    start, end = _parse_date_range(fit_date_range)
+    dcol = df[date_col].astype(str).str.replace('-', '').str[:8]
+    mask = (dcol >= start) & (dcol <= end)
+    n_in = int(mask.sum())
+    print(f"[FIT] 拟合时间范围 [{start}, {end}] 命中 {n_in}/{len(df)} 行")
+    if n_in == 0:
+        raise ValueError(f"[ERROR] 拟合时间范围 [{start}, {end}] 未命中任何样本")
+    return df[mask]
+
+
+def summarize(prob_col, coef, intc, fit_df=None):
+    """组装拟合方案 summary（dict）: 校准参数 + bscore 分布 + 分位表。"""
     summ = {
         'method': 'LR_calibration + FICO_mapping',
         'formula': {
@@ -134,8 +150,6 @@ def summarize(prob_col, coef, intc, fit_df=None, splits=None):
         # 分位表
         pcts = [10, 25, 50, 75, 90]
         summ['quantiles'] = {f'p{p}': round(float(np.percentile(s, p)), 2) for p in pcts}
-    if splits:
-        summ['splits'] = splits
     return summ
 
 
@@ -145,7 +159,7 @@ def write_summary(summary, json_path, md_path):
     print(f"[SAVE] 拟合方案: {json_path}")
     if md_path:
         lines = ['# FICO 校准拟合方案（score-to-fico）', '']
-        lines.append('**Step 1 — LR 校准**: `odds = ln(p/(1-p))` → `logistic_prob = sigmoid(coef*odds+intc)`（`LogisticRegression(C=20)`，拟合集为 train）')
+        lines.append('**Step 1 — LR 校准**: `odds = ln(p/(1-p))` → `logistic_prob = sigmoid(coef*odds+intc)`（`LogisticRegression(C=20)`）')
         lines.append('')
         lines.append('**Step 2 — 标准分映射**: `bscore = 400 - 35/ln2 * ln(logistic_prob/(1-logistic_prob))`，范围约 **[400, 780]**，**分高险低**')
         lines.append('')
@@ -158,13 +172,8 @@ def write_summary(summary, json_path, md_path):
         if 'quantiles' in summary:
             q = summary['quantiles']
             lines.append(f"- bscore 分位: " + " | ".join(f"{k}={v}" for k, v in q.items()))
-        if 'splits' in summary:
-            lines.append('')
-            lines.append('## 三档转分')
-            for sp, meta in summary['splits'].items():
-                lines.append(f"- `{sp}`: n={meta['n']} | bscore 范围=[{meta['bscore_min']}, {meta['bscore_max']}] | 均值={meta['bscore_mean']}")
         lines.append('')
-        lines.append('> 生产复用: 同一模型后续批次用 `--apply --coef <coef.json>` 转分, 保证跨批次分数口径一致。')
+        lines.append('> 生产复用: 同一模型后续批次用 `--coef <coef.json>` 转分, 保证跨批次分数口径一致。')
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(lines) + '\n')
         print(f"[SAVE] 拟合方案: {md_path}")
@@ -180,146 +189,70 @@ def check_sanity(result, prob_col):
         print(f"[WARN] bscore 非有限值 {bad} 个")
     if lo or hi:
         print(f"[WARN] bscore 越界 {int(lo)} 个(<{BSCORE_SANE_MIN}) / {int(hi)} 个(>{BSCORE_SANE_MAX}) — "
-              f"正常区间 [{BSCORE_SANE_MIN}, {BSCORE_SANE_MAX}]; 显著越界说明 coef/intc 不适用当前分布, 需重新 --fit")
+              f"正常区间 [{BSCORE_SANE_MIN}, {BSCORE_SANE_MAX}]; 显著越界说明 coef/intc 不适用当前分布, 需重新拟合")
     print(f"[INFO] {prob_col} → bscore 范围: [{float(bs.min()):.1f}, {float(bs.max()):.1f}] | 均值: {float(bs.mean()):.1f}")
 
 
-def _run_fit(args):
-    df = load_data(args.data, args.prob_col, args.label_col, args.uid_col, args.date_col)
-    coef, intc = fit_calibration(df, args.prob_col, args.label_col)
+def main():
+    parser = argparse.ArgumentParser(description='概率分 → FICO 标准分转换（score-to-fico, pipeline 内可选 Stage 6）')
+    parser.add_argument('--data', required=True,
+                        help='model-scoring 打分结果 parquet（含 label + score 概率列）')
+    parser.add_argument('--out-dir', required=True,
+                        help='FICO 产物输出目录（建议 <session_dir>/fico）')
+    parser.add_argument('--prob-col', type=str, default='score', help='概率列名(默认 score)')
+    parser.add_argument('--label-col', type=str, default='label', help='标签列名(默认 label)')
+    parser.add_argument('--fit-label-col', type=str, default=None,
+                        help='拟合用标签列名(默认同 --label-col)')
+    parser.add_argument('--fit-date-range', type=str, default=None,
+                        help='拟合样本时间范围 "start,end"(YYYY-MM-DD/YYYYMMDD), 默认全量')
+    parser.add_argument('--date-col', type=str, default='f_p_date', help='日期分区列名(用于 fit-date-range 过滤)')
+    parser.add_argument('--uid-col', type=str, default='fuid', help='用户ID列名(透传)')
+    args = parser.parse_args()
+
+    df = load_data(args.data, args.prob_col)
+    print(f"[FICO] 输入打分数据: {args.data} | shape={df.shape} | 列: {list(df.columns)}")
+
+    label_col = args.fit_label_col or args.label_col
+    if label_col not in df.columns:
+        raise SystemExit(f"[ERROR] 数据缺失标签列: {label_col}（可用 --label-col / --fit-label-col 覆盖）")
+
+    # 1) 拟合集: 默认全量, 支持按时间范围过滤(由编排层确认后传入)
+    fit_df = filter_fit_range(df, args.date_col, args.fit_date_range)
+
+    # 2) 拟合校准参数(仅用 y ∈ {0,1})
+    coef, intc = fit_calibration(fit_df, args.prob_col, label_col)
+
+    # 3) 对全量打分结果转分
     result = apply_scores(df, args.prob_col, coef, intc)
     check_sanity(result, args.prob_col)
-    # 保存校准参数
-    with open(args.coef_out, 'w', encoding='utf-8') as f:
-        json.dump({'coef': coef, 'intc': intc}, f, ensure_ascii=False, indent=2)
-    print(f"[SAVE] 校准参数: {args.coef_out}")
-    # 保存打分（uid/date 透传, 存在才输出）
-    cols = [c for c in [args.uid_col, args.date_col, args.prob_col, 'odds', 'logistic_prob', 'bscore'] if c and c in result.columns]
-    save_data(result, args.out, cols)
-    # 拟合方案
-    if args.summary_out or args.summary_md:
-        summ = summarize(args.prob_col, coef, intc, fit_df=result)
-        write_summary(summ, args.summary_out, args.summary_md)
 
+    os.makedirs(args.out_dir, exist_ok=True)
 
-def _run_apply(args):
-    if not os.path.exists(args.coef):
-        raise SystemExit(f"[ERROR] 校准参数文件不存在: {args.coef}")
-    with open(args.coef, 'r', encoding='utf-8') as f:
-        params = json.load(f)
-    coef, intc = params['coef'], params['intc']
-    df = load_data(args.data, args.prob_col, None, args.uid_col, args.date_col)
-    result = apply_scores(df, args.prob_col, coef, intc)
-    check_sanity(result, args.prob_col)
-    cols = [c for c in [args.uid_col, args.date_col, args.prob_col, 'odds', 'logistic_prob', 'bscore'] if c and c in result.columns]
-    save_data(result, args.out, cols)
-
-
-def _run_from_run(args):
-    """pipeline 嵌入: 消费 new-models/{run}/predictions/*.parquet, 产出 {run}/fico/"""
-    run_dir = args.run_dir
-    pred_dir = os.path.join(run_dir, 'predictions')
-    if not os.path.isdir(pred_dir):
-        raise SystemExit(f"[ERROR] predictions 目录不存在: {pred_dir}（请确认已跑完 training 的 predictions 阶段）")
-    fnames = {sp: os.path.join(pred_dir, f'{sp}_predictions.parquet') for sp in ('train', 'test', 'oot')}
-    missing = [sp for sp, p in fnames.items() if not os.path.exists(p)]
-    if missing:
-        raise SystemExit(f"[ERROR] 缺少预测文件: {missing}（score-to-fico 需要 train/test/oot 三档）")
-
-    fico_dir = args.fico_dir or os.path.join(run_dir, 'fico')
-    os.makedirs(fico_dir, exist_ok=True)
-
-    # 1) train 拟合
-    train = pd.read_parquet(fnames['train'])
-    prob_col = args.prob_col or ('score' if 'score' in train.columns else None)
-    label_col = args.label_col or ('label' if 'label' in train.columns else None)
-    if not prob_col or not label_col:
-        raise SystemExit(f"[ERROR] 预测文件中未找到概率列/标签列: {list(train.columns)}（可用 --prob-col/--label-col 覆盖）")
-    coef, intc = fit_calibration(train, prob_col, label_col)
-
-    # 2) 保存校准参数（生产 --apply 复用）
-    coef_path = os.path.join(fico_dir, 'coef.json')
+    # 4) 保存校准参数
+    coef_path = os.path.join(args.out_dir, 'coef.json')
     with open(coef_path, 'w', encoding='utf-8') as f:
         json.dump({'coef': coef, 'intc': intc}, f, ensure_ascii=False, indent=2)
     print(f"[SAVE] 校准参数: {coef_path}")
 
-    # 3) 三档转分
-    splits_meta = {}
-    for sp, p in fnames.items():
-        df = pd.read_parquet(p)
-        res = apply_scores(df, prob_col, coef, intc)
-        check_sanity(res, prob_col)
-        # 输出列: id_cols(非 score/label/bucket 的列) + label + score + bucket + odds + logistic_prob + bscore
-        id_cols = [c for c in df.columns if c not in (prob_col, label_col, 'bucket')]
-        out_cols = id_cols + ([label_col] if label_col else []) + [prob_col, 'bucket', 'odds', 'logistic_prob', 'bscore']
-        out_cols = [c for c in out_cols if c in res.columns]
-        out_path = os.path.join(fico_dir, f'fico_{sp}_predictions.parquet')
-        res[out_cols].to_parquet(out_path, index=False)
-        print(f"[SAVE] {sp} 转分: {out_path} | n={len(res)}")
-        splits_meta[sp] = {
-            'n': int(len(res)),
-            'bscore_min': round(float(res['bscore'].min()), 2),
-            'bscore_max': round(float(res['bscore'].max()), 2),
-            'bscore_mean': round(float(res['bscore'].mean()), 2),
-            'file': os.path.basename(out_path),
-        }
+    # 5) 输出转分结果: 全部输入列 + odds/logistic_prob/bscore
+    out_cols = [c for c in df.columns] + ['odds', 'logistic_prob', 'bscore']
+    out_path = os.path.join(args.out_dir, 'fico_predictions.parquet')
+    result[out_cols].to_parquet(out_path, index=False)
+    print(f"[SAVE] 转分结果: {out_path} | n={len(result)}")
 
-    # 3) 拟合方案
-    summ = summarize(prob_col, coef, intc, fit_df=None, splits=splits_meta)
-    summ['run_dir'] = run_dir
-    summ['prob_col'] = prob_col
-    summ['label_col'] = label_col
-    write_summary(summ, os.path.join(fico_dir, 'fitting-summary.json'), os.path.join(fico_dir, 'fitting-summary.md'))
+    # 6) 拟合方案
+    summ = summarize(args.prob_col, coef, intc, fit_df=result)
+    summ['data'] = args.data
+    summ['prob_col'] = args.prob_col
+    summ['fit_label_col'] = label_col
+    summ['fit_date_range'] = args.fit_date_range
+    write_summary(summ, os.path.join(args.out_dir, 'fitting-summary.json'),
+                  os.path.join(args.out_dir, 'fitting-summary.md'))
 
-    # 4) 输出清单
-    print(f"[DONE] FICO 转换完成: {fico_dir}")
-    print(f"  - 校准参数: {os.path.join(fico_dir, 'coef.json')}")
-    print(f"  - 拟合方案: {os.path.join(fico_dir, 'fitting-summary.md')}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description='风控模型分 → FICO 标准分转换（score-to-fico）')
-    parser.add_argument('--fit', action='store_true', help='拟合模式：输入带标签集, 产出 coef/intc + 转分 + 拟合方案')
-    parser.add_argument('--apply', action='store_true', help='转分模式：输入概率 + 已保存 coef/intc, 产出标准分')
-    parser.add_argument('--from-run', action='store_true', help='pipeline 嵌入：读 new-models/{run}/predictions/*.parquet, 产 {run}/fico/')
-    # 通用
-    parser.add_argument('--data', type=str, help='输入数据 CSV/parquet (fit/apply 模式)')
-    parser.add_argument('--prob_col', type=str, help='概率列名 (fit/apply 默认 pred_proba; from-run 默认 score)')
-    parser.add_argument('--label_col', type=str, help='标签列名 (fit 必填; from-run 默认 label)')
-    parser.add_argument('--uid_col', type=str, default='fuid', help='用户ID列名')
-    parser.add_argument('--date_col', type=str, default='f_p_date', help='日期分区列名')
-    parser.add_argument('--out', type=str, default='result_score.parquet', help='打分输出路径 (fit/apply)')
-    parser.add_argument('--coef_out', type=str, default='coef.json', help='校准参数输出 (fit)')
-    parser.add_argument('--coef', type=str, default='coef.json', help='校准参数输入 (apply)')
-    parser.add_argument('--summary_out', type=str, help='拟合方案 JSON 输出 (fit)')
-    parser.add_argument('--summary_md', type=str, help='拟合方案 MD 输出 (fit)')
-    # from-run
-    parser.add_argument('--run-dir', type=str, help='run 目录 (from-run): 如 new-models/lgb-v1')
-    parser.add_argument('--fico-dir', type=str, help='FICO 输出目录 (from-run, 默认 <run_dir>/fico)')
-    args = parser.parse_args()
-
-    n_modes = sum([args.fit, args.apply, args.from_run])
-    if n_modes != 1:
-        raise SystemExit("[ERROR] 必须三选一: --fit / --apply / --from-run")
-
-    if args.from_run:
-        if not args.run_dir:
-            raise SystemExit("[ERROR] --from-run 模式需要 --run-dir")
-        _run_from_run(args)
-    elif args.fit:
-        if not args.data or not args.label_col:
-            raise SystemExit("[ERROR] --fit 模式需要 --data 和 --label_col")
-        # summary 默认跟随 --out 所在目录, 避免误落 cwd
-        out_dir = os.path.dirname(os.path.abspath(args.out))
-        if not args.summary_out:
-            args.summary_out = os.path.join(out_dir, 'fitting-summary.json')
-        if not args.summary_md:
-            args.summary_md = os.path.join(out_dir, 'fitting-summary.md')
-        _run_fit(args)
-    else:
-        if not args.data:
-            raise SystemExit("[ERROR] --apply 模式需要 --data")
-        _run_apply(args)
+    print(f"[DONE] FICO 转换完成: {args.out_dir}")
+    print(f"  - 校准参数: {coef_path}")
+    print(f"  - 转分结果: {out_path}")
+    print(f"  - 拟合方案: {os.path.join(args.out_dir, 'fitting-summary.md')}")
 
 
 if __name__ == '__main__':

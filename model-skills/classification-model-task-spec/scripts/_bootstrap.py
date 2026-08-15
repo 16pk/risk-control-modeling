@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """把 model-skills/_modelevo-shared/scripts 注入 sys.path,让 task-spec 的 fetch_sample 能直接
-import config_io / gen_fetch_command / fetch_spark。
+import config_io / date_utils。
 
 仅 import 一次即可生效。_modelevo-shared/ 由 install.sh 从仓库根复制到 model-skills/ 下,
-与 feature-matching/scripts/_bootstrap.py 行为一致。
+与 data-cleaning/scripts/_bootstrap.py 行为一致。
 """
 import sys
 from pathlib import Path

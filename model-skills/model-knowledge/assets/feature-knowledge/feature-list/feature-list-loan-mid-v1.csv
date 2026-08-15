@@ -1,4 +1,4 @@
-﻿table_name,feature_category,scene
+feature_name,feature_category,scene
 dp_jckx_mart.rmodel3_daily_feats_level2_rpy_bhvr,还款,贷中
 dp_jckx_mart.rmodel3_daily_feats_level2_ln_bhvr,借款,贷中
 dp_jckx_mart.rmodel3_daily_feats_level2_ovd_bhvr,逾期,贷中

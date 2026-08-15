@@ -2,15 +2,15 @@
 """report.md 自动回填器。
 
 按 classification-model-development/SKILL.md §6 契约,从 session_dir 下各 sub-skill
-产出的 manifest/JSON/CSV 中提取信息,幂等更新 report.md 的四~七段。
+产出的 manifest/JSON/CSV 中提取信息,幂等更新 report.md 的三~六段。
 
 段落归属:
-- 四(特征宽表) — 由 `classification-model-orchestration` Step 4B 触发回填
-- 五(特征分析) — 由 `classification-model-development` Stage 0 触发回填
-- 六(模型迭代) / 七(横向对比) — 由 `classification-model-development` 触发回填
+- 三(特征宽表) — 由 `classification-model-orchestration` Step 4B 触发回填
+- 四(特征分析) — 由 `classification-model-development` Stage 0 触发回填
+- 五(模型迭代) / 六(横向对比) — 由 `classification-model-development` 触发回填
 
-幂等: 同一段落多次调用结果一致 — 用 `## 四、` 等 H2 锚点切分,替换段落内容,
-保留首部 (一~三段) 与其他段落不变。
+幂等: 同一段落多次调用结果一致 — 用 `## 三、` 等 H2 锚点切分,替换段落内容,
+保留首部 (一~二段) 与其他段落不变。
 
 用法:
     python fill_report.py --session-dir <path> --section {IV|V|VI|VII|all}
@@ -26,15 +26,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 SECTION_ANCHORS = {
-    "IV": ("## 四、特征宽表", "## IV. 特征宽表"),
-    "V": ("## 五、特征分析", "## V. 特征分析"),
-    "VI": ("## 六、模型迭代", "## VI. 模型迭代"),
-    "VII": ("## 七、横向对比", "## VII. 横向对比"),
+    "IV": ("## 三、特征宽表", "## III. 特征宽表"),
+    "V": ("## 四、特征分析", "## IV. 特征分析"),
+    "VI": ("## 五、模型迭代", "## V. 模型迭代"),
+    "VII": ("## 六、横向对比", "## VI. 横向对比"),
 }
 # 元组 (中文锚点, 英文锚点): 中文为写出形式, 英文为读取形式(识别已有 report.md)。
-# report.md 章节编号(汉字 一~七)与本脚本 section key 对应:
-#   - 一/二/三 (需求 / 样本 / 历史模型推荐) 由 orchestration 自填
-#   - 四~七 (特征宽表 / 特征分析 / 模型迭代 / 横向对比) 由本脚本接管
+# report.md 章节编号(汉字 一~六)与本脚本 section key 对应(历史模型推荐一节已移除,
+# 原四~七 顺延为 三~六):
+#   - 一/二 (需求 / 样本) 由 orchestration 自填
+#   - 三~六 (特征宽表 / 特征分析 / 模型迭代 / 横向对比) 由本脚本接管
 #   - 附录「待处理项与下一步建议」由 orchestration 自填(不带编号)
 # 如改 report.md 章节顺序, 务必同步本表锚点。
 
@@ -148,14 +149,12 @@ def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
 # ===== Section IV: 特征宽表 =====
 
 def build_section_iv(session_dir: Path) -> str:
-    """特征宽表段 — 来源: feature-list.csv + 三档切分(切分由 feature-analysis Stage 0 / task-spec 完成)。
+    """特征宽表段 — 来源: feature-list.csv + 三档切分(切分唯一真相 = feature-analysis Stage 0 产 splits)。
 
-    manifest 来源:
-      ① sample-features/splits/ (feature-analysis Stage 0 产, 含三档 parquet) — 主
-      ② data-profile/_split_manifest.json (task-spec run_sample_analysis 产) — fallback
-    任一可用即回填。
+    manifest 来源: 仅 sample-features/splits/ (feature-analysis Stage 0 产, 含三档 parquet)。
+    切分已从 task-spec 后置, data-profile 不再产 _split_manifest.json。
     """
-    fm_dir = session_dir / "sample-features" / "feature-matching"
+    dc_dir = session_dir / "sample-features" / "data-cleaning"
     manifest = None
     source_tag = "—"
 
@@ -163,18 +162,11 @@ def build_section_iv(session_dir: Path) -> str:
     if splits_dir.exists() and (splits_dir / "train.parquet").exists():
         manifest = _build_split_manifest_from_parquets(splits_dir)
         source_tag = "feature-analysis(splits)"
-    else:
-        dp_manifest = _read_json(
-            session_dir / "data-profile" / "_split_manifest.json"
-        )
-        if dp_manifest:
-            manifest = dp_manifest
-            source_tag = "data-profile"
 
     if not manifest:
         return (
             f"{SECTION_ANCHORS['IV'][0]}\n\n"
-            "（特征宽表/切分尚未执行: sample-features/splits/ 与 data-profile/_split_manifest.json 均缺失）\n"
+            "（特征宽表/切分尚未执行: sample-features/splits/ 缺失）\n"
         )
 
     splits = manifest.get("splits", {})
@@ -182,7 +174,7 @@ def build_section_iv(session_dir: Path) -> str:
     time_col = manifest.get("time_col", "f_p_date")
     label_col = manifest.get("label_col", "label")
 
-    feature_list_csv = fm_dir / "feature-list.csv"
+    feature_list_csv = dc_dir / "feature-list.csv"
     n_features_listed = 0
     if feature_list_csv.exists():
         with feature_list_csv.open(encoding="utf-8") as f:
@@ -200,7 +192,7 @@ def build_section_iv(session_dir: Path) -> str:
     for split_name in ("train", "test", "oot"):
         s = splits.get(split_name, {})
         r = ranges.get(split_name, {})
-        # 兼容两种区间字段名: feature-matching/data-profile 用 'start'/'end',
+        # 兼容两种区间字段名: data-cleaning/data-profile 用 'start'/'end',
         # data-profile split 内也可能用 'pday_range' (列表)
         start = r.get("start") if isinstance(r, dict) else None
         end = r.get("end") if isinstance(r, dict) else None
@@ -480,14 +472,14 @@ def _split_report(content: str) -> List[Tuple[str, str]]:
 def _is_anchor_match(anchor: str, targets: Tuple[str, str]) -> bool:
     """检查 anchor 是否匹配 targets 中的任意一个。
 
-    targets = ("## 四、特征宽表", "## IV. 特征宽表") 等。
-    匹配规则: 比较"序号 token"(四、 / IV.)与"标题关键词"(特征宽表),都一致才算匹配。
+    targets = ("## 三、特征宽表", "## III. 特征宽表") 等。
+    匹配规则: 比较"序号 token"(三、 / III.)与"标题关键词"(特征宽表),都一致才算匹配。
     """
     if not anchor:
         return False
 
     def _parse(line: str) -> Tuple[str, str]:
-        """返回 (序号token, 标题剩余)。例: '## 四、特征宽表' → ('四、', '特征宽表')。"""
+        """返回 (序号token, 标题剩余)。例: '## 三、特征宽表' → ('三、', '特征宽表')。"""
         if not line.startswith("## "):
             return ("", line)
         rest = line[3:].strip()

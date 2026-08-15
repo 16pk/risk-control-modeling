@@ -228,7 +228,6 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 | 上游 | `feature-analysis`（仅 select_features） | 读其 `stats.csv / iv_table.csv / psi_table.csv` |
 | 下游 | `classification-model-evaluation` | 评估依赖（强制）：本 skill 不自带评估报告逻辑，predictions 阶段写完三档 parquet 后调其 `eval_single.py` 产标准化三件套到 `evaluation/` |
 | 下游 | `classification-model-comparison` | 对比依赖（强制链式）：评估完成后自动以 baseline run 的 `evaluation/` 目录为基准，调其 `compare_models.py` 与新 run 做 N-way 对比，产 `comparison/` 子目录 |
-| 下游 | `classification-model-recommend` | tuned / feat run 同样可人工登记到台账 |
 
 ## 6. 执行约束
 

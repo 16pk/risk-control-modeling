@@ -41,4 +41,4 @@
 | 字段名称 | 中文含义 | 类型 |  备注 |
 |---|---|---|---|
 | f_p_date | 多数数据表的切片日期 | string | YYYY-mm-dd |
-| fuid | 用户id | string | - | 
+| fuid | 用户id | int | - | 

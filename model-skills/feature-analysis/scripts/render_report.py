@@ -29,6 +29,35 @@ def _df_to_md(df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
         return "\n".join([head, sep] + body)
 
 
+def _render_split_stats(split_meta: dict) -> List[str]:
+    """渲染切分统计段(三档样本量/正样本率/正负比/dropped_rows/跨档差异)。
+
+    合并 task-spec 后置的切分统计口径, 与 task-spec 原「Train/Test/OOT 切分」段对齐。
+    """
+    sc = split_meta.get("sample_counts") or {}
+    pr = split_meta.get("pos_rates") or {}
+    pnr = split_meta.get("positive_negative_ratio") or {}
+    lines = ["", "### 切分统计 (Train/Test/OOT)", ""]
+    lines.append("| 集合 | 样本量 | 正样本率 | 正负比 |")
+    lines.append("|------|--------|----------|--------|")
+    for nm in ("train", "test", "oot"):
+        n = sc.get(nm)
+        rate = pr.get(nm)
+        ratio = pnr.get(nm)
+        rate_s = f"{rate:.2%}" if isinstance(rate, (int, float)) else "—"
+        lines.append(f"| {nm} | {n if n is not None else '—'} | {rate_s} | {ratio or '—'} |")
+    lines.append("")
+    dropped = split_meta.get("dropped_rows")
+    cross = split_meta.get("cross_split_pos_rate_diff_pp")
+    if dropped is not None or cross is not None:
+        lines.append(
+            f"> 区间外/label 非法剔除行数(dropped_rows): {dropped if dropped is not None else '—'}; "
+            f"三档正样本率跨档差异: {cross if cross is not None else '—'}pp"
+        )
+        lines.append("")
+    return lines
+
+
 def render_report(
     cfg: dict,
     features: List[str],
@@ -42,6 +71,7 @@ def render_report(
     n_test: int = 0,
     woe_top_n: int = 20,
     invalid_report: pd.DataFrame = None,
+    split_meta: dict = None,
 ) -> str:
     """渲染特征报告 markdown 文本。
 
@@ -54,6 +84,7 @@ def render_report(
         n_test: 测试段样本量; 0 时不显示该段
         woe_top_n: WOE 段展开的特征数(按 iv_df 顺序取前 N); 默认 20
         invalid_report: 哨兵值替换明细(feature/hit_values/n_hit/hit_ratio); 非空时渲染提醒段
+        split_meta: 切分统计(_split_sample_to_three 返回的 report), 非空时在概述段渲染三档样本量/正样本率/正负比/dropped_rows/跨档差异
 
     Returns:
         markdown 字符串
@@ -75,11 +106,13 @@ def render_report(
     lines.append("")
     lines.append("## 一、概述")
     lines.append("")
-    lines.append("- 样本来源: 由 `feature-matching` 产出 (sample.parquet)")
+    lines.append("- 样本来源: 由 `data-cleaning` 产出 (sample.parquet)")
     lines.append(f"- 标签列: `{label_col}`")
     lines.append(f"- 特征数: **{len(features)}**")
     lines.append(seg_line)
     lines.append(f"- 配置: PSI 阈值={psi_warn}")
+    if split_meta:
+        lines.extend(_render_split_stats(split_meta))
     lines.append("")
     lines.append("> 本报告仅描述特征质量, **不**自动剔除特征。")
     lines.append("")
@@ -124,18 +157,17 @@ def render_report(
         lines.append("_(无 PSI 结果, 可能未切出 OOT)_")
     lines.append("")
 
-    # 五、哨兵值替换(切分前已执行)
+    # 五、哨兵值校验提醒(替换已上移到 data-cleaning, 本阶段只检查残留)
     if invalid_report is not None and not invalid_report.empty:
-        lines.append("## 五、无效值哨兵替换 (切分前已执行)")
+        lines.append("## 五、无效值哨兵校验提醒")
         lines.append("")
         lines.append("> 哨兵值集合: `-1,-2,-9,-99,-999,-9999,-99999`(可配 `model.invalid_values`)。"
-                     "这些值通常是'无数据/拒贷/异常'占位符, **已在本阶段将命中值替换为 NaN(空值)**,"
-                     "splits 三档均为清洗后数据。")
+                     "哨兵值替换已由上游 `data-cleaning` 完成, 本阶段**仅校验是否仍有残留**, 不修改数据。"
+                     "检测到以下特征仍残留哨兵值, 请确认是否已运行 data-cleaning 清洗。")
         lines.append("")
         lines.append(_df_to_md(invalid_report))
         lines.append("")
-        lines.append("> 明细见 `invalid-values-report.csv`; 替换后这些样本在训练中按缺失处理,"
-                     "避免模型学到虚假取值边界。")
+        lines.append("> 明细见 `invalid-values-report.csv`; 若为清洗前残留, 建议回退到 data-cleaning 处理。")
         lines.append("")
 
     return "\n".join(lines)

@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
-"""样本分析 + 切分一体化脚本。
+"""纯样本分析脚本(切分已后置到 feature-analysis)。
 
-输入: feature-matching 拉的全量样本 parquet (含 id_col / label_col / time_col 三列及可选补充字段),
-      + 显式 Train/Test/OOT 三档日期区间。id_col 默认 fuid, 可由 --id-cols override
-      (分析侧取单列作主 ID, 与 fetch 侧 --id-cols 多列命名对齐)。
+输入: task-spec 自拉/用户提供的全量样本 parquet (含 id_col / label_col / time_col 三列及可选补充字段)。
+      id_col 默认 fuid, 可由 --id-cols override (分析侧取单列作主 ID, 与 fetch 侧 --id-cols 多列命名对齐)。
       日期兼容 YYYY-MM-DD 与 8 位 YYYYMMDD 两种格式(内部统一归一化比较)。
-输出: report.md / report.xlsx / _manifest.json / _split_manifest.json /
-      train.parquet / test.parquet / oot.parquet, 全部落在 --output-dir。
+输出: report.md / report.xlsx / _manifest.json, 全部落在 --output-dir。
 
-切分逻辑从 feature-matching/scripts/split_sample.py 复制核心函数, 独立可执行, 不依赖 feature-matching skill;
+本脚本只做「需求确认阶段」的标签质量分析:
+  - compute_overall        全量样本概览(样本量/正样本率/正负比/pday 范围等)
+  - segment_by_time        分时间段统计(默认按月 YYYYMM 聚合)
+  - judge_stability        标签时间稳定性判定
+  - judge_sufficiency      样本充足度判定
+**不再**做三档切分(train/test/oot)与切分统计: 该职责已后置到 feature-analysis
+(基于 data-cleaning 清洗后样本, 单一真相为 feature_config.yaml 的 model.split)。
+
 日期归一化复用公共 _modelevo-shared/scripts/date_utils(通过 _bootstrap 注入)。
 
 用法:
     python run_sample_analysis_task_spec.py \
         --sample .../sample.parquet \
-        --train-range 2026-04-01,2026-05-10 \
-        --test-range  2026-05-11,2026-05-20 \
-        --oot-range   2026-05-21,2026-05-30 \
         --model-name call_complaint \
         --timestamp 20260629-161231 \
         --output-dir .../data-profile/ \
@@ -28,87 +30,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import List
 
 import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts 供 date_utils 使用
 import pandas as pd
-
-
-# ---------- 区间解析与切分 (复制自 split_sample.py) ----------
-
-def parse_range(text: str) -> Tuple[str, str]:
-    """解析 '起,止' 闭区间 (YYYY-MM-DD / YYYYMMDD 双兼容, 归一化为 8 位)。"""
-    import date_utils
-
-    parts = [p.strip() for p in str(text).split(",") if p.strip()]
-    if len(parts) != 2:
-        raise ValueError("区间须为两元素 起,止, 如 2026-03-12,2026-04-30(或 YYYYMMDD), 当前 %r" % text)
-    norm = [date_utils.parse_date(d, what="range") for d in parts]
-    if norm[0] > norm[1]:
-        raise ValueError("区间起始 %s 不应大于结束 %s" % (norm[0], norm[1]))
-    return norm[0], norm[1]
-
-
-def validate_ranges(
-    train: Tuple[str, str], test: Tuple[str, str], oot: Tuple[str, str]
-) -> None:
-    """校验三档区间时序递增, 允许相邻, 重叠/逆序报错。"""
-    ordered = [("train", train), ("test", test), ("oot", oot)]
-    for (n1, r1), (n2, r2) in zip(ordered, ordered[1:]):
-        if r1[1] >= r2[0]:
-            raise ValueError(
-                "%s 区间 [%s,%s] 与 %s 区间 [%s,%s] 重叠或逆序, 要求 train<test<oot(允许相邻)"
-                % (n1, r1[0], r1[1], n2, r2[0], r2[1])
-            )
-
-
-def classify_by_ranges(pday, ranges: Dict[str, Tuple[str, str]]):
-    """按显式日期区间把单个日期归到 train/test/oot, 区间外返回 None。
-
-    数据列值可能是 YYYY-MM-DD 或 YYYYMMDD, 统一归一化为 8 位后再与归一化后的区间比较。
-    """
-    import date_utils
-
-    try:
-        p = date_utils.normalize_date(pday)
-    except ValueError:
-        # 数据值不是合法日期(如 None/nan)视为区间外
-        return None
-    for name in ("train", "test", "oot"):
-        start, end = ranges[name]
-        if start <= p <= end:
-            return name
-    return None
-
-
-def split_dataframe_by_ranges(df, time_col: str, ranges: Dict[str, Tuple[str, str]], label_col: str = None):
-    """按显式 pday 区间把 DataFrame 切成 train/test/oot 三份, 区间外行计入 dropped。
-
-    切分后自动剔除 label 缺失/非法(NaN 或非 0/1)的行——标签缺失的样本无法参与训练与
-    评估(尤其 OOT 评估), 必须从三档中剔除, 避免下游 AUC/KS 计算报错或口径污染。
-    """
-    if time_col not in df.columns:
-        raise ValueError("时间列 %r 不在样本列中, 无法按时间切分" % time_col)
-    split_series = df[time_col].map(lambda p: classify_by_ranges(p, ranges))
-    train_df = df[split_series == "train"]
-    test_df = df[split_series == "test"]
-    oot_df = df[split_series == "oot"]
-    dropped = int(split_series.isna().sum())
-    if label_col is not None and label_col in df.columns:
-        valid = df[label_col].isin([0, 1])
-        n_invalid = int((~valid).sum())
-        if n_invalid:
-            print(
-                "[run_sample_analysis_task_spec] [警告] %d 行 label 缺失/非法, 已从三档切分中剔除"
-                % n_invalid,
-                file=sys.stderr,
-            )
-            train_df = train_df[train_df[label_col].isin([0, 1])]
-            test_df = test_df[test_df[label_col].isin([0, 1])]
-            oot_df = oot_df[oot_df[label_col].isin([0, 1])]
-            dropped += n_invalid
-    return train_df, test_df, oot_df, dropped
 
 
 # ---------- 输入校验 ----------
@@ -130,13 +55,6 @@ def validate_input(df, args) -> None:
     bad_dates = sorted(d for d in non_nan if not date_utils.is_date(d))
     if bad_dates:
         raise SystemExit("日期列存在非法值(须为 YYYY-MM-DD 或 8 位 YYYYMMDD): %s" % bad_dates[:5])
-
-    ranges = {
-        "train": parse_range(args.train_range),
-        "test": parse_range(args.test_range),
-        "oot": parse_range(args.oot_range),
-    }
-    validate_ranges(ranges["train"], ranges["test"], ranges["oot"])
 
 
 # ---------- 统计计算 ----------
@@ -191,29 +109,14 @@ def compute_overall(df, args) -> dict:
 
 
 def segment_by_time(df, args) -> List[dict]:
-    """按时间分段统计。pday 唯一值 <= 10 时按 pday 切; 否则按周/月聚合。"""
+    """按时间分段统计, 默认按月(YYYYMM)聚合。
+
+    数据可能 YYYY-MM-DD 或 YYYYMMDD, 统一归一化后取月份前缀 YYYYMM。
+    """
+    import date_utils
+
     time_col = args.dt_col
     label_col = args.label_col
-    pday_vals = sorted(df[time_col].astype(str).unique().tolist())
-
-    if len(pday_vals) <= 10:
-        segments = []
-        for pday in pday_vals:
-            sub = df[df[time_col].astype(str) == pday]
-            n = int(len(sub))
-            pos = int((sub[label_col] == 1).sum())
-            neg = int((sub[label_col] == 0).sum())
-            segments.append({
-                "pday": pday,
-                "samples": n,
-                "positive": pos,
-                "positive_rate": round(pos / n, 6) if n else 0.0,
-                "pos_neg_ratio": _fmt_ratio(pos, neg),
-            })
-        return segments
-
-    # pday > 10 时按月聚合: 数据可能 YYYY-MM-DD 或 YYYYMMDD, 归一化后取前 6 位 YYYYMM
-    import date_utils
 
     df_dt = df.copy()
     df_dt["_month"] = df_dt[time_col].astype(str).map(
@@ -291,58 +194,9 @@ def judge_sufficiency(overall: dict) -> dict:
     }
 
 
-def compute_split_stats(df, args, train_df, test_df, oot_df, dropped: int) -> dict:
-    """切分后统计。"""
-    total = int(len(df))
-    ranges = {
-        "train": list(parse_range(args.train_range)),
-        "test": list(parse_range(args.test_range)),
-        "oot": list(parse_range(args.oot_range)),
-    }
-
-    def _stat(sub):
-        n = int(len(sub))
-        pos = int((sub[args.label_col] == 1).sum()) if n else 0
-        if args.dt_col in sub.columns and n:
-            pday_min = str(sub[args.dt_col].min())
-            pday_max = str(sub[args.dt_col].max())
-        else:
-            pday_min = pday_max = None
-        return {
-            "rows": n,
-            "positive": pos,
-            "positive_rate": round(pos / n, 6) if n else 0.0,
-            "pday_range": [pday_min, pday_max],
-        }
-
-    splits = {"train": _stat(train_df), "test": _stat(test_df), "oot": _stat(oot_df)}
-    rates = [splits[k]["positive_rate"] for k in ("train", "test", "oot")]
-    cross_diff = round((max(rates) - min(rates)) * 100, 2) if rates else 0.0
-
-    return {
-        "method": "time_explicit",
-        "ranges": ranges,
-        "dropped_rows": dropped,
-        "actual_ratios": {
-            "train": round(len(train_df) / total, 6) if total else 0,
-            "test": round(len(test_df) / total, 6) if total else 0,
-            "oot": round(len(oot_df) / total, 6) if total else 0,
-        },
-        "splits": splits,
-        "cross_split_pos_rate_diff_pp": cross_diff,
-        "note": "显式 pday 区间切分, 三档正样本率差异 %.2fpp" % cross_diff,
-    }
-
-
 # ---------- 输出 ----------
 
-def write_splits(train_df, test_df, oot_df, output_dir: str) -> None:
-    for name, sub in (("train", train_df), ("test", test_df), ("oot", oot_df)):
-        sub.to_parquet(os.path.join(output_dir, "%s.parquet" % name), index=False)
-
-
-def write_report_md(overall, segments, stability, sufficiency, split_stats, args, output_dir: str) -> None:
-    rates = [s["positive_rate"] for s in segments]
+def write_report_md(overall, segments, stability, sufficiency, args, output_dir: str) -> None:
     n_seg = len(segments)
 
     def _pos_pct(x):
@@ -355,18 +209,11 @@ def write_report_md(overall, segments, stability, sufficiency, split_stats, args
         ) for s in segments
     )
 
-    sp = split_stats["splits"]
-    tr, te, oo = sp["train"], sp["test"], sp["oot"]
-    actual = split_stats["actual_ratios"]
-    cross_diff = split_stats["cross_split_pos_rate_diff_pp"]
     id_col = args._id_col_primary
     time_col = args.dt_col
 
-    if args.mode == "local_file":
-        source_label = args.local_parquet_path or args.sample or "未提供"
-        source_line = "> 数据位置: %s" % source_label
-    else:
-        source_line = "> 样本表: %s" % (args.sample_table or "未提供")
+    source_label = args.local_parquet_path or args.sample or "未提供"
+    source_line = "> 数据位置: %s" % source_label
 
     content = f"""# 样本分析报告
 
@@ -388,7 +235,7 @@ def write_report_md(overall, segments, stability, sufficiency, split_stats, args
 | 用户数（{id_col} 去重） | {overall.get('user_unique', 'NA')} |
 | {id_col} + {time_col} 重复 | {overall.get('dup_user_pday', 'NA')} |
 
-## 二、分时间段标签分布
+## 二、分时间段标签分布（按月）
 
 | 时间段 | 样本量 | 正样本数 | 正样本率 | 正负比 |
 |--------|--------|----------|----------|--------|
@@ -420,33 +267,18 @@ def write_report_md(overall, segments, stability, sufficiency, split_stats, args
 - {'关注 Train→OOT 漂移' if stability['judgment'] != '稳定' else '标签稳定'}：波动幅度 {stability['volatility_pp']:.2f}pp，建模时关注 Train→OOT PSI
 - 样本量：{sufficiency['judgment']}
 
-## 五、Train/Test/OOT 切分
+## 五、下一步
 
-| 集合 | 样本量 | 正样本数 | 正样本率 | pday 范围 | 占比 |
-|------|--------|----------|----------|-----------|------|
-| Train | {tr['rows']:,} | {tr['positive']:,} | {tr['positive_rate']:.2%} | {tr['pday_range'][0]} ~ {tr['pday_range'][1]} | {actual['train']:.0%} |
-| Test  | {te['rows']:,} | {te['positive']:,} | {te['positive_rate']:.2%} | {te['pday_range'][0]} ~ {te['pday_range'][1]} | {actual['test']:.0%} |
-| OOT   | {oo['rows']:,} | {oo['positive']:,} | {oo['positive_rate']:.2%} | {oo['pday_range'][0]} ~ {oo['pday_range'][1]} | {actual['oot']:.0%} |
-
-> 切分方式：显式区间（time_explicit）
-> 三档区间：Train [{split_stats['ranges']['train'][0]}, {split_stats['ranges']['train'][1]}] / Test [{split_stats['ranges']['test'][0]}, {split_stats['ranges']['test'][1]}] / OOT [{split_stats['ranges']['oot'][0]}, {split_stats['ranges']['oot'][1]}]
-> 区间外丢弃行数：{split_stats['dropped_rows']}
-> 实际占比 {actual['train']:.0%}:{actual['test']:.0%}:{actual['oot']:.0%}
->
-> 三档正样本率分别为 {tr['positive_rate']:.2%} / {te['positive_rate']:.2%} / {oo['positive_rate']:.2%}，跨档差异 ≤ {cross_diff:.2f}pp
-
-## 六、下一步
-
-1. ⏳ **等用户确认切分结果**
-2. 之后 → 编排器调用 `classification-model-recommend` 检索历史模型
-3. 之后 → `feature-matching`（拼接模式）拉特征宽表
+1. ⏳ **等用户确认样本分析结果**
+2. 之后 → `data-cleaning` 数据清洗（哨兵值替换 + 去重 + 派生特征清单）
+3. 之后 → `feature-analysis` 特征分析（切分三档 + IV/PSI/基础统计）
 4. 最后 → 建模决策（询问是否进入 model-development）
 """
     with open(os.path.join(output_dir, "report.md"), "w", encoding="utf-8") as f:
         f.write(content)
 
 
-def write_report_xlsx(overall, segments, split_stats, args, output_dir: str) -> None:
+def write_report_xlsx(overall, segments, args, output_dir: str) -> None:
     try:
         import openpyxl  # noqa: F401
     except ImportError:
@@ -467,26 +299,13 @@ def write_report_xlsx(overall, segments, split_stats, args, output_dir: str) -> 
         "pday": "时间段", "samples": "样本量", "positive": "正样本数",
         "positive_rate": "正样本率", "pos_neg_ratio": "正负比",
     })
-    sp = split_stats["splits"]
-    split_df = pd.DataFrame([
-        {"集合": "Train", "样本量": sp["train"]["rows"], "正样本数": sp["train"]["positive"],
-         "正样本率": sp["train"]["positive_rate"],
-         "pday范围": "%s ~ %s" % (sp["train"]["pday_range"][0], sp["train"]["pday_range"][1])},
-        {"集合": "Test", "样本量": sp["test"]["rows"], "正样本数": sp["test"]["positive"],
-         "正样本率": sp["test"]["positive_rate"],
-         "pday范围": "%s ~ %s" % (sp["test"]["pday_range"][0], sp["test"]["pday_range"][1])},
-        {"集合": "OOT", "样本量": sp["oot"]["rows"], "正样本数": sp["oot"]["positive"],
-         "正样本率": sp["oot"]["positive_rate"],
-         "pday范围": "%s ~ %s" % (sp["oot"]["pday_range"][0], sp["oot"]["pday_range"][1])},
-    ])
 
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as w:
         overview_df.to_excel(w, sheet_name="overview", index=False)
         seg_df.to_excel(w, sheet_name="time_segments", index=False)
-        split_df.to_excel(w, sheet_name="split_stats", index=False)
 
 
-def write_manifest(overall, segments, stability, sufficiency, split_stats, args, output_dir: str) -> None:
+def write_manifest(overall, segments, stability, sufficiency, args, output_dir: str) -> None:
     manifest = {
         "produced_by": "classification-skills/classification-model-task-spec",
         "schema_version": 1,
@@ -498,45 +317,15 @@ def write_manifest(overall, segments, stability, sufficiency, split_stats, args,
         "time_segments": segments,
         "stability": stability,
         "sample_sufficiency": sufficiency,
-        "split": split_stats,
-        "split_manifest": "_split_manifest.json",
-        "split_files": {
-            "train": "train.parquet",
-            "test": "test.parquet",
-            "oot": "oot.parquet",
-        },
         "user_confirmed": False,
     }
     with open(os.path.join(output_dir, "_manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-    split_manifest = {
-        "produced_by": "classification-skills/classification-model-task-spec",
-        "schema_version": 1,
-        "model_name": args.model_name,
-        "timestamp": args.timestamp,
-        "method": split_stats["method"],
-        "ranges": split_stats["ranges"],
-        "dropped_rows": split_stats["dropped_rows"],
-        "actual_ratios": split_stats["actual_ratios"],
-        "splits": split_stats["splits"],
-        "cross_split_pos_rate_diff_pp": split_stats["cross_split_pos_rate_diff_pp"],
-        "split_files": {
-            "train": "train.parquet",
-            "test": "test.parquet",
-            "oot": "oot.parquet",
-        },
-    }
-    with open(os.path.join(output_dir, "_split_manifest.json"), "w", encoding="utf-8") as f:
-        json.dump(split_manifest, f, ensure_ascii=False, indent=2)
 
-
-def print_summary(overall, stability, sufficiency, split_stats) -> None:
-    sp = split_stats["splits"]
-    tr, te, oo = sp["train"], sp["test"], sp["oot"]
-    actual = split_stats["actual_ratios"]
+def print_summary(overall, stability, sufficiency) -> None:
     print()
-    print("样本分析 + 切分完成")
+    print("样本分析完成")
     print()
     print("样本概览:")
     print("- 总样本: %s，正样本率 %.2f%%" % (f"{overall['total_samples']:,}", overall["positive_rate"] * 100))
@@ -544,26 +333,14 @@ def print_summary(overall, stability, sufficiency, split_stats) -> None:
     print("- 标签稳定性: %s（%.2fpp）" % (stability["judgment"], stability["volatility_pp"]))
     print("- 样本充足度: %s" % sufficiency["judgment"])
     print()
-    print("Train/Test/OOT 切分:")
-    print("| 集合 | 样本量 | 正样本率 | pday 范围 |")
-    print("|------|--------|----------|-----------|")
-    print("| Train | %s | %.2f%% | %s ~ %s |" % (f"{tr['rows']:,}", tr["positive_rate"] * 100, tr["pday_range"][0], tr["pday_range"][1]))
-    print("| Test  | %s | %.2f%% | %s ~ %s |" % (f"{te['rows']:,}", te["positive_rate"] * 100, te["pday_range"][0], te["pday_range"][1]))
-    print("| OOT   | %s | %.2f%% | %s ~ %s |" % (f"{oo['rows']:,}", oo["positive_rate"] * 100, oo["pday_range"][0], oo["pday_range"][1]))
-    print()
-    print("切分比例 %d:%d:%d" % (round(actual["train"] * 100), round(actual["test"] * 100), round(actual["oot"] * 100)))
-    if split_stats["dropped_rows"]:
-        print("[警告] %d 行 pday 不在三档区间内, 已丢弃" % split_stats["dropped_rows"])
+    print("切分三档将在 feature-analysis 阶段完成(基于 data-cleaning 清洗后样本)")
 
 
 # ---------- 主入口 ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="classification-model-task-spec 样本分析 + 切分一体化")
-    parser.add_argument("--sample", required=True, help="feature-matching 拉的全量样本 parquet 路径")
-    parser.add_argument("--train-range", required=True, help="Train 日期闭区间, 如 2026-04-01,2026-05-10(兼容 YYYYMMDD)")
-    parser.add_argument("--test-range", required=True, help="Test 日期闭区间, 如 2026-05-11,2026-05-20(兼容 YYYYMMDD)")
-    parser.add_argument("--oot-range", required=True, help="OOT 日期闭区间, 如 2026-05-21,2026-05-30(兼容 YYYYMMDD)")
+    parser = argparse.ArgumentParser(description="classification-model-task-spec 纯样本分析(切分已后置到 feature-analysis)")
+    parser.add_argument("--sample", required=True, help="task-spec 拉取/用户提供的全量样本 parquet 路径")
     parser.add_argument("--model-name", required=True, help="模型英文简称")
     parser.add_argument("--timestamp", required=True, help="session 时间戳 YYYYMMDD-HHMMSS")
     parser.add_argument("--output-dir", required=True, help="输出目录 (通常是 data-profile/)")
@@ -574,11 +351,9 @@ def main() -> None:
     parser.add_argument("--id-cols", default="fuid", help="用户唯一标识列名(逗号分隔多列时取首列作主 ID), 默认 fuid")
     parser.add_argument("--id-col", default=argparse.SUPPRESS, dest="id_col_deprecated",
                         help="[已弃用 alias] 用 --id-cols; 传入时覆盖 --id-cols (单列)")
-    parser.add_argument("--sample-table", default=None, help="样本源表名 (写入 manifest 用, 可选)")
-    parser.add_argument("--mode", choices=["spark", "local_file"], default="spark",
-                        help="数据模式: spark=报告头展示表名, local_file=展示本地数据位置")
+    parser.add_argument("--sample-table", default=None, help="样本源表名 (写入 manifest 用, 可选, 仅记录)")
     parser.add_argument("--local-parquet-path", default=None,
-                        help="local_file 模式下的本地数据路径 (parquet/csv), 用于报告头展示")
+                        help="本地数据路径 (parquet/csv/feather), 用于报告头展示")
     args = parser.parse_args()
 
     # 兼容老参数: --time-col / --id-col 仍可传入 (已弃用, 推荐用 --dt-col / --id-cols)
@@ -605,24 +380,10 @@ def main() -> None:
     stability = judge_stability(segments)
     sufficiency = judge_sufficiency(overall)
 
-    ranges = {
-        "train": parse_range(args.train_range),
-        "test": parse_range(args.test_range),
-        "oot": parse_range(args.oot_range),
-    }
-    train_df, test_df, oot_df, dropped = split_dataframe_by_ranges(
-        df, args.dt_col, ranges, label_col=args.label_col
-    )
-    if dropped:
-        print("[run_sample_analysis_task_spec] [警告] %d 行落在三档区间外或 label 缺失, 已丢弃" % dropped, file=sys.stderr)
-
-    split_stats = compute_split_stats(df, args, train_df, test_df, oot_df, dropped)
-
-    write_splits(train_df, test_df, oot_df, args.output_dir)
-    write_report_md(overall, segments, stability, sufficiency, split_stats, args, args.output_dir)
-    write_report_xlsx(overall, segments, split_stats, args, args.output_dir)
-    write_manifest(overall, segments, stability, sufficiency, split_stats, args, args.output_dir)
-    print_summary(overall, stability, sufficiency, split_stats)
+    write_report_md(overall, segments, stability, sufficiency, args, args.output_dir)
+    write_report_xlsx(overall, segments, args, args.output_dir)
+    write_manifest(overall, segments, stability, sufficiency, args, args.output_dir)
+    print_summary(overall, stability, sufficiency)
 
 
 if __name__ == "__main__":

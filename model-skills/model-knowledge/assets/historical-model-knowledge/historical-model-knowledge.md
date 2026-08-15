@@ -1,6 +1,6 @@
 # 历史模型知识库
 
-沉淀已上线/已归档模型的档案，供 `classification-model-recommend` 等下游 skill 检索复用。
+沉淀已上线/已归档模型的档案，供下游 skill 检索复用。
 
 ## 组成
 

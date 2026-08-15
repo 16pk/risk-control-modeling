@@ -21,7 +21,7 @@ description: 聚合 session 内 task-spec / data-profile / feature-analysis / ne
 | `new-models/*/explainability/{feature-importance,shap-summary}.csv` | 否 | `classification-model-training` Stage 5 产 | Sheet 6(AUC 最高 run)的特征重要性 / SHAP Top 30 |
 | `new-models/*/features/used-feature-list.csv` | 否 | `classification-model-training` 产 | Sheet 6 入模特征清单统计 |
 
-**扫描范围**: 仅扫 `<session_dir>/new-models/*/`,**不扫 `model-recommend/`**(历史模型通常无 eval JSON / explainability,纳入会全是占位行,无信息量)。
+**扫描范围**: 仅扫 `<session_dir>/new-models/*/`。
 
 **容错**: 每个输入独立加载,缺失时对应 sheet 写"上游产物缺失"占位,不阻断整体流程。仅 `<session_dir>` 或 `new-models/` 不存在时才立即退出。
 
@@ -75,7 +75,7 @@ python <skill_dir>/scripts/build_report.py \
 | # | Sheet 名 | 内容 | 数据来源 |
 |---|---------|------|---------|
 | 1 | 1-模型概览 | KV 格式 8 个段: 基础信息 / 路由溯源 / WHO / WHAT / HOW GOOD / CONSTRAINTS / HOW TO USE / 数据源 | `<session_dir>/task-spec/_manifest.json` |
-| 2 | 2-样本分析 | KV 格式 4 段(总体样本 / 稳定性 / 样本充足性 / 切分元信息)+ 2 张附表(分时段样本 / Train-Eval-OOT 切分);**不画 DataBar**(纯数值) | `<session_dir>/data-profile/_manifest.json` + `sample-features/feature-matching/_split_manifest.json` |
+| 2 | 2-样本分析 | KV 格式 4 段(总体样本 / 稳定性 / 样本充足性 / 切分元信息)+ 2 张附表(分时段样本 / Train-Eval-OOT 切分);**不画 DataBar**(纯数值) | `<session_dir>/data-profile/_manifest.json` + `sample-features/feature-analysis/analysis/_manifest.json` |
 | 3 | 3-特征质量 | **全量特征单表**(17 列): # / feature / dtype / IV / 单变量 AUC / PSI / PSI 预警 / 有效分箱 / 缺失率 / unique / mean / std / min / q25 / median / q75 / max;合并 iv_table + psi_table + stats 三张 csv,特征 union 后**按 IV 降序排序**(缺失 IV 排末尾);**无 KV 概况段**(样本分析已在 Sheet 2) | `<session_dir>/sample-features/feature-analysis/analysis/{_manifest.json, iv_table.csv, psi_table.csv, stats.csv}` |
 | 4 | 4-三档评估 | 按 split 分块(**train / test / oot / all 四档**纵向堆叠),每子表列: run_name / 样本量 / 正样本率 / AUC / KS / 准确率 / 精确率 / 召回率 / F1;多 run 横向对比;**不画 DataBar** | `new-models/*/evaluation/{run_name}_{train,test,oot,all}_eval.json` 的 `metric_by_segment['全量']`(all = train+test+oot 合并评估) |
 | 5 | 5-分桶排序性对比 | **严格参考 `classification-model-comparison` 对比报告.xlsx Sheet 2 格式**: 顶部指标计算逻辑 + 基线版本声明; **仅 oot + all 两档**按 split 分块, 每子表两层表头(metric group header + 模型名子表头, 基线加 "(基线)" 后缀), 列按 metric 分组(label率×n / 召回率×n / 累计召回×n), 10 decile 数据行 + 主表 DataBar(label率绿/召回率蓝/累计召回蓝); 主表下方接 Lift 子表(基线列 "-", 其他列比值, >1 绿/<1 红, 不画 DataBar) | `new-models/*/evaluation/{run_name}_{oot,all}_eval.json` 的 `performance.score_buckets['全量']` |
@@ -199,7 +199,7 @@ python <skill_dir>/scripts/build_report.py \
 | 不覆盖:AUC/KS 单指标对比表 | 由 `classification-model-comparison` skill 覆盖;本 skill Sheet 4 含 AUC/KS 但定位是"多 run 全量评估指标对比",非纯 AUC/KS 对比表 |
 | 数据安全红线 | 只读前序产物,不修改任何上游文件;唯一写操作是 `<session_dir>/{session_name}_report.xlsx` |
 | 文件来源真实 | 所有 sheet 的 source_note 必须写实际文件绝对路径(`f"{session_dir}/..."`),不允许写占位符 |
-| 扫描范围 | 仅扫 `<session_dir>/new-models/*/`,不扫 `model-recommend/`(历史模型通常无 eval JSON) |
+| 扫描范围 | 仅扫 `<session_dir>/new-models/*/` |
 | AUC 最高 run 选择 | Sheet 6 用 `_find_best_run` 动态选 oot AUC 最高的 run(oot 缺失则 train AUC 兜底),不硬编码 |
 | 依赖 | openpyxl(Python 3.x);当前默认 `python` 无 openpyxl,可用 `/data/oceanus_ctr_wkdir/pyenv/anaconda_data_ai/bin/python` 跑 |
 | 何时用 | 当用户对一个已完成多个 run 的 session 想要一份聚合 Excel 报告(含需求 / 样本 / 特征质量 / 三档评估 / 分桶并排 / 特征清单)时使用 |

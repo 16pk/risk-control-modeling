@@ -27,7 +27,7 @@ def validate_config(cfg: dict) -> None:
     model = cfg.get("model") or {}
     if not model.get("split"):
         raise ValueError(
-            "配置 model.split 缺失: feature-analysis 现在内部切分, "
+            "配置 model.split 缺失: feature-analysis 是切分唯一真相(切分已从 task-spec 后置), "
             "必须配 train_range / test_range / oot_range 三档 pday 区间"
         )
     validate_split_ranges(model)
@@ -48,7 +48,7 @@ def cross_validate_features(
 
     Args:
         user_features: 用户指定的特征名列表
-        data_feature_list_path: feature-matching 产出的 feature-list.csv 路径
+        data_feature_list_path: data-cleaning 产出的 feature-list.csv 路径
 
     Returns:
         (valid_features, missing_features):

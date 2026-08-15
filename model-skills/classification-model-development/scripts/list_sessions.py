@@ -2,7 +2,7 @@
 """扫描 runs/ 下历史 sessions, 格式化打印供 agent / 用户选择。
 
 两种情形:
-- 当前会话已有 session_dir (上游 feature-matching / feature-analysis 已跑过) → 直接复用, 不询问。
+- 当前会话已有 session_dir (上游 data-cleaning / feature-analysis 已跑过) → 直接复用, 不询问。
 - 用户新启动一个会话直接调 model-training → 调本脚本列出历史 sessions,
   agent 用 AskUserQuestion 问: 选历史(列编号) 或 新建(追问 task_name/description)。
 

@@ -18,8 +18,8 @@ Agent 型（单个 AI 专家）
 专家目录下的 `model-skills/` 包含完整的 ModelEvo 技能集，导入后专家可直接调度执行真实计算；`_modelevo-shared/` 为公共代码（配置读写 + 数据安全红线）。
 
 - 路由与知识：`model-task-routing` / `model-knowledge`
-- 共享能力：`feature-matching` / `feature-analysis`
-- 分类建模：`classification-model-orchestration` / `classification-model-task-spec` / `classification-model-recommend` / `classification-model-development` / `classification-model-training` / `classification-model-tuning` / `classification-model-evaluation` / `classification-model-comparison` / `classification-model-report`
+- 共享能力：`data-cleaning` / `feature-analysis`
+- 分类建模：`classification-model-orchestration` / `classification-model-task-spec` / `classification-model-development` / `classification-model-training` / `classification-model-tuning` / `classification-model-evaluation` / `classification-model-comparison` / `classification-model-report`
 
 ## 使用示例
 

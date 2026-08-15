@@ -1,0 +1,27 @@
+# data-cleaning 配置模板
+# 复制为 data_cleaning_config.yaml 并填真实值。
+# 安全红线: 严禁在任何字段硬编码用户ID/手机号/身份证号。
+#
+# 说明: 本 skill 以 CLI 参数为主(clean_data.py --id-col/--dt-col/--label-col/--invalid-values),
+# 此 yaml 记录可复用的清洗方案参数, 供编排层或人工复跑时参考。清洗产物以
+# <session_dir>/sample-features/data-cleaning/cleaning-scheme.json 为权威。
+
+cleaning:
+  # 哨兵值集合: 命中这些值的特征列将替换为 NaN(视为缺失)。空列表 [] 表示不做替换。
+  invalid_values: [-1, -2, -9, -99, -999, -9999, -99999]
+
+  # 去重维度: 按「用户 + 日期」去重; 冲突保留 label 非空行。
+  dedup_keys: ["fuid", "f_p_date"]
+  dedup_keep_rule: label_non_null
+
+  # 强门禁: 检测到哨兵值命中时是否自动继续(编排层已确认时置 true)。
+  auto_confirm: false
+
+  # 可选, 特征清单过滤文件; 派生 feature-list.csv 时取交集, 不传则派生全量特征列。
+  feature_list_source: null
+
+model:
+  # 列名由数据探查自主识别 + 用户确认后填入; 不提供默认值(避免误配)。
+  id_col: fuid
+  dt_col: f_p_date
+  label_col: label

@@ -4,12 +4,12 @@
 
 ## 1. 覆盖范围与适用范围
 
-用于建模前查看候选特征的分布/缺失/IV/PSI,判断哪些特征不稳定(PSI 高)、哪些预测力弱(IV/AUC 低);不用于建模/训练(走 `classification-model-training`),也不用于历史模型查询(走 `classification-model-recommend`)。
+用于建模前查看候选特征的分布/缺失/IV/PSI,判断哪些特征不稳定(PSI 高)、哪些预测力弱(IV/AUC 低);不用于建模/训练(走 `classification-model-training`)。
 
 ## 2. 取数边界与切分边界
 
-- **取数边界**:`sample.parquet` 由上游 `feature-matching` skill 产出,或用户通过 `--data_path` 指定任意路径;本 skill 不负责取数,也不读上游三档 parquet
-- **切分边界**:切分由本 skill 按 `model.split` 内部完成,落 `<session_dir>/sample-features/splits/`,与 `feature-matching/sample.parquet` 同级
+- **取数边界**:`sample.parquet` 由上游 `data-cleaning` skill 产出(`--data_path` 固定指向, 不再支持任意路径);本 skill 不负责取数/清洗,也不读上游三档 parquet
+- **切分边界**:切分由本 skill 按 `model.split` 内部完成(切分唯一真相, 已从 task-spec 后置),落 `<session_dir>/sample-features/splits/`,与 `data-cleaning/sample.parquet` 同级
 
 ## 3. 职责边界
 
@@ -31,7 +31,7 @@
 |---|---|---|
 | 特征清单文件 | `--feature_list_source` / yaml `model.feature_list_source` | .txt 按行 / .csv 取 `feature_name` 列 |
 | 特征列表 | yaml `model.features` | 直接在配置里写列表 |
-| 交叉校验基准 | `--cross_validate_csv` | feature-matching 产出的 `feature-list.csv`(自动推断) |
+| 交叉校验基准 | `--cross_validate_csv` | data-cleaning 产出的 `feature-list.csv`(自动推断) |
 
 ### 6.2 来源优先级(CLI → yaml → 报错)
 
@@ -51,7 +51,7 @@
 
 ### 6.4 交叉校验(强制)
 
-用户指定的特征清单必须与 feature-matching 产出的 `feature-list.csv` 做交叉校验:
+用户指定的特征清单必须与 data-cleaning 产出的 `feature-list.csv` 做交叉校验:
 
 - 每个用户指定的特征名必须在 `feature-list.csv` 中存在
 - 不在数据中的特征:打印 warn 并**自动排除**,不阻断分析

@@ -1,17 +1,16 @@
 {
   "name": "risk-control-modeling",
-  "version": "1.4.0",
-  "description": "Interactive end-to-end credit risk modeling expert: data exploration, feature engineering (IV/PSI/WOE), tree-model development & tuning (XGBoost/LightGBM), evaluation (AUC/KS/PSI), and scorecards on demand — with key decisions confirmed by the user, extensible via MCP connectors & skills.",
+  "version": "1.5.0",
+  "description": "Interactive end-to-end credit risk modeling expert: data exploration, feature engineering (IV/PSI/WOE), tree-model development & tuning (XGBoost/LightGBM), evaluation (AUC/KS/PSI), and scorecards on demand — with key decisions confirmed by the user, a lightweight orchestration mode for rapid default runs (skip stages explicitly, keeping manifest/record_stage traceability), extensible via MCP connectors & skills.",
   "agents": ["./agents/risk-control-modeling.md"],
   "skills": [
     "./model-skills/model-task-routing",
     "./model-skills/model-knowledge",
-    "./model-skills/feature-matching",
+    "./model-skills/data-cleaning",
     "./model-skills/feature-analysis",
     "./model-skills/credit-data-analysis",
     "./model-skills/classification-model-orchestration",
     "./model-skills/classification-model-task-spec",
-    "./model-skills/classification-model-recommend",
     "./model-skills/classification-model-development",
     "./model-skills/classification-model-training",
     "./model-skills/classification-model-tuning",
@@ -20,15 +19,7 @@
     "./model-skills/classification-model-report",
     "./model-skills/credit-model-report",
     "./model-skills/score-to-fico",
-    "./model-skills/uplift-model-task-spec",
-    "./model-skills/uplift-model-sample-preparation",
-    "./model-skills/uplift-model-sample-homogeneity-check",
-    "./model-skills/uplift-model-feature-quality-analysis",
-    "./model-skills/uplift-model-s-learner-modeling",
-    "./model-skills/uplift-model-t-learner-modeling",
-    "./model-skills/uplift-model-tuning",
-    "./model-skills/uplift-model-result-comparison",
-    "./model-skills/uplift-model-reporting"
+    "./model-skills/model-scoring"
   ],
 
   "expertType": "agent",
@@ -43,8 +34,8 @@
     "zh": "信贷风控建模专家"
   },
   "displayDescription": {
-    "en": "End-to-end credit risk modeling: data exploration, feature selection, tree-model development & tuning, and evaluation — interactive confirmation at key steps, deployment-ready models.",
-    "zh": "专注信贷风控建模全流程：数据探索、特征筛选、树模型开发调优与评估，关键环节交互确认，产出可上线模型。"
+    "en": "End-to-end credit risk modeling: data exploration, feature selection, tree-model development & tuning, and evaluation — interactive confirmation at key steps, with a lightweight orchestration mode for rapid default runs (skip stages explicitly, keep manifest/record_stage traceability), deployment-ready models.",
+    "zh": "专注信贷风控建模全流程：数据探索、特征筛选、树模型开发调优与评估，关键环节交互确认，支持精简编排模式（默认方案快速出模型，显式跳过阶段且保留可追溯记录），产出可上线模型。"
   },
   "avatar": "avatars/expert.png",
   "categoryId": "08-FinanceInvestment",

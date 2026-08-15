@@ -9,7 +9,7 @@
 
 配置文件落 session 内 (从 feature-analysis/config/feature_config.example.yaml 复制),
 不落 skill 自身 config/ 目录, 保持 session 自包含。
---data_path 可指向 feature-matching 产出的 sample.parquet, 也可指向用户指定的任意路径。
+--data_path 固定指向 data-cleaning 产出的 sample.parquet(输入契约已收紧, 不再支持任意路径)。
 
 主交付 report.md;同目录另落:
   - feature-profile.csv: 基础统计语义化合并表(同 stats.csv 内容)
@@ -31,15 +31,10 @@ from typing import List, Optional, Tuple
 
 import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts
 
-# 注入 feature-matching/scripts 以复用 load_feature_list
-_FM_SCRIPTS = Path(__file__).resolve().parent.parent / ".." / "feature-matching" / "scripts"
-if str(_FM_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_FM_SCRIPTS))
-
 import pandas as pd
-import numpy as np  # noqa: F401  (哨兵值替换 / 空值处理)
+import numpy as np  # noqa: F401  (哨兵值校验 / 空值处理)
 
-from gen_feature_list import load_feature_list  # noqa: E402  feature-matching 公共特征加载
+from gen_feature_list import load_feature_list  # noqa: E402  _modelevo-shared 公共特征加载
 from validate_config import load_config, validate_config, cross_validate_features
 from feature_stats import compute_basic_stats
 from feature_iv import compute_iv_table, build_woe_table
@@ -143,49 +138,44 @@ def _parse_invalid_values(cfg_val, cli_val: Optional[str]) -> list:
     return vals
 
 
-def replace_invalid_values(
-    df: pd.DataFrame, features: List[str], invalid_values: list, label_col: str = None
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """把特征列中的哨兵值(如 -1/-2/-999/-9999)替换为 NaN。
+def check_invalid_values(
+    df: pd.DataFrame, features: List[str], invalid_values: list
+) -> pd.DataFrame:
+    """校验入模特征中是否仍残留哨兵值(仅校验提醒, **不修改数据**)。
 
-    仅作用于入模特征列(features); label / id / dt 列不参与。
-    返回 (替换后的 df, 替换统计 DataFrame)。
+    哨兵值替换已上移到 data-cleaning skill; 本 skill 只检查数据中是否还有漏网哨兵值
+    (例如用户跳过了 data-cleaning, 或哨兵值集合不一致), 发现即提醒用户, 不在这里改数据。
 
     Args:
-        df: 全量样本
-        features: 入模特征清单(仅这些列会被检查替换)
+        df: 全量样本(应已是 data-cleaning 清洗后数据)
+        features: 入模特征清单
         invalid_values: 哨兵值集合; 空列表则跳过
-        label_col: 标签列名, 用于统计各特征替换前后的坏率变化(可选)
 
     Returns:
-        (df_cleaned, report_df): report_df 列 = feature / hit_values / n_hit / hit_ratio
+        report_df: 列 = feature / hit_values / n_hit / hit_ratio(空表 = 未发现残留哨兵值)
     """
     if not invalid_values:
-        return df, pd.DataFrame(columns=["feature", "hit_values", "n_hit", "hit_ratio"])
+        return pd.DataFrame(columns=["feature", "hit_values", "n_hit", "hit_ratio"])
 
-    df_clean = df.copy()
     report_rows = []
     for fc in features:
-        if fc not in df_clean.columns:
+        if fc not in df.columns:
             continue
-        s = df_clean[fc]
+        s = df[fc]
         if not pd.api.types.is_numeric_dtype(s):
             continue
         hit = [v for v in invalid_values if (s == v).any()]
         if not hit:
             continue
-        mask = s.isin(hit)
-        n_hit = int(mask.sum())
+        n_hit = int(s.isin(hit).sum())
         report_rows.append({
             "feature": fc,
             "hit_values": ",".join(str(int(v)) if float(v).is_integer() else str(v) for v in hit),
             "n_hit": n_hit,
             "hit_ratio": round(n_hit / len(s), 6),
         })
-        df_clean.loc[mask, fc] = np.nan
 
-    report_df = pd.DataFrame(report_rows)
-    return df_clean, report_df
+    return pd.DataFrame(report_rows)
 
 
 def _split_sample_to_three(
@@ -204,8 +194,9 @@ def _split_sample_to_three(
 
     Returns:
         (train_df, test_df, oot_df, split_report_dict)
-        split_report_dict 字段对齐 model_training 的 SplitReport.to_dict():
-          split_strategy / oot_boundary / sample_counts / pos_rates / time_col_used
+        split_report_dict 字段(命名统一 test, 合并 task-spec 切分统计口径):
+          split_strategy / oot_boundary / sample_counts / pos_rates /
+          dropped_rows / cross_split_pos_rate_diff_pp / positive_negative_ratio / time_col_used
     """
     train_q = _range_to_query(dt_col, split_cfg["train_range"])
     test_q = _range_to_query(dt_col, split_cfg["test_range"])
@@ -222,12 +213,17 @@ def _split_sample_to_three(
     test_df = df.query(test_q).reset_index(drop=True)
     oot_df = df.query(oot_q).reset_index(drop=True)
 
+    # 区间外行数(落在三档区间之外, 不参与切分)
+    n_out_of_range = int(len(df)) - (len(train_df) + len(test_df) + len(oot_df))
+
     # 切分后剔除 label 缺失/非法行: 标签缺失样本无法参与训练与评估(尤其 OOT 评估,
     # AUC/KS 会因 NaN 报错或口径污染)。三档统一剔除, 保持 splits 与评估口径一致。
+    n_label_invalid = 0
     if label_col is not None and label_col in df.columns:
         for name, sub in (("train", train_df), ("test", test_df), ("oot", oot_df)):
             valid = sub[label_col].isin([0, 1])
             n_invalid = int((~valid).sum())
+            n_label_invalid += n_invalid
             if n_invalid:
                 print(
                     f"[feature-analysis] {name} 档剔除 {n_invalid} 行 label 缺失/非法样本"
@@ -239,18 +235,40 @@ def _split_sample_to_three(
                 else:
                     oot_df = oot_df[valid]
 
+    # 三档正样本率(跨档差异) + 正负比(与 task-spec 口径对齐, 切分统计后置到本 skill)
+    pos_rates = {
+        "train": _pos_rate(train_df, label_col),
+        "test": _pos_rate(test_df, label_col),
+        "oot": _pos_rate(oot_df, label_col),
+    }
+    rates = [r for r in pos_rates.values() if r is not None]
+    cross_diff_pp = round((max(rates) - min(rates)) * 100, 2) if rates else 0.0
+
+    def _pos_neg_ratio(sub: pd.DataFrame) -> Optional[str]:
+        if label_col is None or label_col not in sub.columns or len(sub) == 0:
+            return None
+        s = sub[label_col].dropna()
+        pos = int((s.astype(float) == 1).sum())
+        neg = int((s.astype(float) == 0).sum())
+        if neg == 0:
+            return "1 : 0" if pos > 0 else None
+        return "1 : %.2f" % (neg / max(pos, 1))
+
     report = {
         "split_strategy": "explicit",
         "oot_boundary": f"{dt_col} >= {split_cfg['oot_range'][0]}",
         "sample_counts": {
             "train": int(len(train_df)),
-            "val": int(len(test_df)),
+            "test": int(len(test_df)),
             "oot": int(len(oot_df)),
         },
-        "pos_rates": {
-            "train": _pos_rate(train_df, label_col),
-            "val": _pos_rate(test_df, label_col),
-            "oot": _pos_rate(oot_df, label_col),
+        "pos_rates": pos_rates,
+        "dropped_rows": n_out_of_range + n_label_invalid,
+        "cross_split_pos_rate_diff_pp": cross_diff_pp,
+        "positive_negative_ratio": {
+            "train": _pos_neg_ratio(train_df),
+            "test": _pos_neg_ratio(test_df),
+            "oot": _pos_neg_ratio(oot_df),
         },
         "time_col_used": dt_col,
     }
@@ -399,16 +417,22 @@ def run_analysis(
 
     Args:
         config_path: feature_config.yaml 路径
-        data_path: sample.parquet 路径 (通常 feature-matching 产出; 也支持用户指定任意路径)
+        data_path: sample.parquet 路径 (固定指向 data-cleaning 产出)
         output_dir: 报告输出目录
         feature_list_source: 可选, 覆盖 yaml 内 feature_list_source 的特征清单文件
-        cross_validate_csv: 可选, feature-matching 产出的 feature-list.csv, 用于交叉校验
-        invalid_values_cli: 可选, CLI 哨兵值集合(逗号分隔), 覆盖 yaml model.invalid_values
+        cross_validate_csv: 可选, data-cleaning 产出的 feature-list.csv, 用于交叉校验
+        invalid_values_cli: 可选, CLI 哨兵值集合(逗号分隔), 覆盖 yaml model.invalid_values(仅校验)
     """
     if not data_path:
         raise ValueError("必须传 --data_path 指向 sample.parquet")
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"数据文件不存在: {data_path}")
+    # 输入契约收紧(D8): --data_path 固定指向 data-cleaning 产出的 sample.parquet
+    if os.path.basename(data_path) != "sample.parquet":
+        print(
+            f"[feature-analysis] WARN --data_path={data_path} 文件名非 sample.parquet; "
+            f"输入契约要求固定指向 data-cleaning 产出的 sample.parquet"
+        )
 
     cfg = load_config(config_path)
     model = cfg.get("model") or {}
@@ -465,7 +489,7 @@ def run_analysis(
     label_col = model.get("label_col", "label")
     dt_col = model.get("dt_col", "f_p_date")
 
-    # ---- 数据加载 + 计算资源路由探测 + 哨兵值替换 + 内部切分 ----
+    # ---- 数据加载 + 计算资源路由探测 + 哨兵值校验提醒 + 内部切分 ----
     df = pd.read_parquet(data_path) if data_path.endswith(".parquet") else pd.read_csv(data_path)
     _validate_label(df, label_col)
 
@@ -475,22 +499,22 @@ def run_analysis(
     compute_route = _compute_routing(df, sample_features_root=samples_root)
     print(f"[feature-analysis] route={compute_route} (splits 仍正常产出; 本地训练侧据此裁决是否转 ray-distributed-train)")
 
-    # 哨兵值替换(切分前统一清洗, splits 三档均为清洗后数据, 下游 training/tuning 直接受益)
+    # 哨兵值校验提醒(替换已上移到 data-cleaning, 本 skill 只检查是否有残留并提醒, 不改数据)
     invalid_values = _parse_invalid_values(model.get("invalid_values"), invalid_values_cli)
     if invalid_values:
         print(
-            f"[invalid-values] 哨兵值集合: {invalid_values}, "
-            f"将入模特征中命中值替换为 NaN(切分前统一清洗)"
+            f"[invalid-values] 校验哨兵值集合: {invalid_values} "
+            f"(仅检查残留, 不在此处替换; 替换由 data-cleaning 完成)"
         )
-    df, invalid_report = replace_invalid_values(df, features, invalid_values, label_col)
+    invalid_report = check_invalid_values(df, features, invalid_values)
     if len(invalid_report) > 0:
         print(
-            f"[invalid-values] ⚠ 已替换 {len(invalid_report)} 个特征的哨兵值: "
+            f"[invalid-values] ⚠ 检测到 {len(invalid_report)} 个特征仍残留哨兵值: "
             f"{invalid_report.sort_values('n_hit', ascending=False).head(5).to_dict('records')}"
         )
-        print("[invalid-values] 建议在建模时保留替换结果(视为缺失), 详情见 invalid-values-report.csv")
+        print("[invalid-values] 提示: 请确认是否已运行 data-cleaning 清洗; 若未清洗, 建议回退到 data-cleaning 处理")
     else:
-        print("[invalid-values] ✓ 未发现哨兵值命中, 无需替换")
+        print("[invalid-values] ✓ 未发现残留哨兵值")
 
     # dt_col 统一转 int (pday 可能是 string YYYYMMDD / Arrow string / datetime), 否则 query '>=' 会触发 str vs int TypeError
     if dt_col in df.columns and not pd.api.types.is_integer_dtype(df[dt_col]):
@@ -513,7 +537,7 @@ def run_analysis(
 
     # 切分产物落 <session_dir>/sample-features/splits/
     # output_dir 形如 <session_dir>/sample-features/feature-analysis/analysis,
-    # parent.parent 即 <session_dir>/sample-features, 与 feature-matching/sample.parquet 同级
+    # parent.parent 即 <session_dir>/sample-features, 与 data-cleaning/sample.parquet 同级
     splits_dir = Path(output_dir).parent.parent / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
     train_df.to_parquet(splits_dir / "train.parquet", index=False)
@@ -547,6 +571,7 @@ def run_analysis(
         woe_df=woe_df,
         n_test=len(test_df),
         invalid_report=invalid_report,
+        split_meta=split_meta,
     )
 
     out_dir = Path(output_dir)
@@ -568,7 +593,7 @@ def run_analysis(
     psi_df.to_csv(out_dir / "psi_table.csv", index=False)
     woe_df.to_csv(out_dir / "woe_table.csv", index=False)
 
-    # 哨兵值替换明细(供追溯; 空表也落, 表明已执行过检查)
+    # 哨兵值校验明细(仅校验提醒, 不替换; 空表也落, 表明已执行过检查)
     invalid_report.to_csv(out_dir / "invalid-values-report.csv", index=False)
 
     # 多 sheet xlsx 报告
@@ -591,6 +616,15 @@ def run_analysis(
         overview["sample_counts"] = split_meta.get("sample_counts")
         overview["pos_rates"] = split_meta.get("pos_rates")
         overview["time_col_used"] = split_meta.get("time_col_used")
+        overview["dropped_rows"] = split_meta.get("dropped_rows")
+        overview["cross_split_pos_rate_diff_pp"] = split_meta.get("cross_split_pos_rate_diff_pp")
+        overview["positive_negative_ratio"] = split_meta.get("positive_negative_ratio")
+        # 三档区间(切分唯一真相, 供下游 report 展示)
+        overview["split_ranges"] = {
+            "train": list(split_cfg.get("train_range", [])),
+            "test": list(split_cfg.get("test_range", [])),
+            "oot": list(split_cfg.get("oot_range", [])),
+        }
     xlsx_path = out_dir / "report.xlsx"
     xlsx_ok = _write_excel_report(xlsx_path, profile_df, quality_df, overview, woe_df=woe_df)
 
@@ -612,7 +646,7 @@ def main() -> None:
     p.add_argument(
         "--data_path",
         required=True,
-        help="sample.parquet 路径 (通常 feature-matching 产出; 也支持用户指定任意路径)",
+        help="sample.parquet 路径 (固定指向 data-cleaning 产出)",
     )
     p.add_argument("--output_dir", required=True, help="报告输出目录")
     p.add_argument(
@@ -623,13 +657,13 @@ def main() -> None:
     p.add_argument(
         "--cross_validate_csv",
         default=None,
-        help="feature-matching 产出的 feature-list.csv, 用于交叉校验(不传则自动推断)",
+        help="data-cleaning 产出的 feature-list.csv, 用于交叉校验(不传则自动推断)",
     )
     p.add_argument(
         "--invalid-values",
         default=None,
         help="哨兵值集合(逗号分隔, 如 -1,-2,-999,-9999), 覆盖 yaml model.invalid_values; "
-             "命中这些值的入模特征将被替换为 NaN(切分前统一清洗); 传空串 '' 关闭",
+             "仅校验残留哨兵值并提醒(替换已上移到 data-cleaning); 传空串 '' 关闭",
     )
     args = p.parse_args()
 

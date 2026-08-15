@@ -94,7 +94,7 @@ python <skill_dir>/scripts/feature_analysis.py \
 | 上下游 | Skill | 关系 |
 |---|---|---|
 | 平行 | `feature-analysis` | 分工不重叠：本 skill 管分月体检（独立触发），feature-analysis 管建模 pipeline Stage 0（train/test/oot 视角） |
-| 上游 | `feature-matching` | 若在建模 session 内使用，可直接分析其产出的 `sample.parquet` |
+| 上游 | `data-cleaning` | 若在建模 session 内使用，可直接分析其产出的 `sample.parquet` |
 | 独立 | 无强制依赖 | 不依赖 `_modelevo-shared` / Spark，仅 pandas / numpy / openpyxl |
 
 ## 6. 执行约束

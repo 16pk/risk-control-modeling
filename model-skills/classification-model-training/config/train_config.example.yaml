@@ -7,7 +7,7 @@
 #   <session_dir>/sample-features/splits/{train,test,oot}.parquet
 # 切分逻辑收口在 feature-analysis (按其 yaml model.split 区间切分),
 # 本 skill 不做内部切分, 也不消费 model.split 字段。
-# 取数字段(sample_table/fetch_dt/where/spark 段)属于上游 feature-matching 的配置范畴,
+# 取数/清洗字段(sample_table/fetch_dt/where)属于上游 task-spec / data-cleaning 的配置范畴,
 # 不在本 skill 的最小配置内; 如仍在本 yaml 中保留仅为上下文追溯, 本 skill 均不消费。
 
 model:
@@ -19,11 +19,10 @@ model:
                               # (`xgb-v1` / `lgb-v1` / `tuned-v1` / `feat` 会被 validate_config 拒绝,
                               # 因为会与目录规则叠加产生 `xgb-xgb-v1` / `xgb-tuned-tuned-v1` / `xgb-feat` 重复前缀);
                               # 留空且 CLI 未传 --version / --label 时, run_build 自动按 algo+suffix 维度自增(v1→v2...)
-  # ⚠️ local_file 模式必填这两行, 否则 validate_common 按默认 spark 强索 sample_table/fetch_dt 报错:
-  #   mode: local_file
-  #   sample_table: local_file
-  mode: spark                 # 取数模式: spark(默认) | local_file(本地 parquet, 跳过 spark 取数)
-  sample_table: your_db.xxx  # spark 模式必填(库.表); local_file 模式填 local_file 占位
+  # 全仓库已废除 spark 取数, 仅 local_file 语义: 数据来自本地 splits。
+  # mode/sample_table 可省(validate_common 不再按 mode 区分必填), 保留仅为记录。
+  mode: local_file
+  sample_table: local_file
   dt_col: f_p_date            # 日期分区字段(默认 YYYY-MM-DD, 兼容 8 位 YYYYMMDD; 用于评估报告展示; 切分由 feature-analysis 负责)
   label_col: label            # 标签字段(0/1)
   id_cols: [fuid]             # 去重/落盘用, exclude_cols 排除, 不入模
@@ -33,9 +32,9 @@ model:
   feature_list_source: null             # 显式给 csv/txt 路径(csv 取 feature_name 列); 相对路径先按本 yaml 所在目录解析, 再按 model-skills 根解析; 可从 feature-knowledge.md 索引查各业务域清单
                                         # ⚠️ local_file 模式下 features 与 feature_list_source 都留空会触发 xgb "0 feature" 报错, 必须二选一填实
 
-  baseline_eval_dir: null     # 基线模型评估目录(如 model-recommend/yx_001/evaluation/);
+  baseline_eval_dir: null     # 基线模型评估目录(如 <baseline>/yx_001/evaluation/);
                               # 配置后, 训练完成自动与基线做 N-way 对比, 产 comparison/ 子目录;
-                              # null = 跳过对比
+                              # null/留空 = 跳过对比
 
   # 边界特征过滤(剔除会让训练失败或泄漏的特征)
   # 4 条规则: constant(常量) / leakage(IV 过高, 特征穿越) / id_like(unique/count 高) / all_missing(全缺失)

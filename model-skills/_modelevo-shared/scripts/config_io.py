@@ -12,7 +12,7 @@ import sys
 
 import yaml
 
-# 定位 model-skills 根(用于注入 feature-matching/scripts 到 sys.path、解析 feature_list_source 相对路径)。
+# 定位 model-skills 根(用于解析 feature_list_source 相对路径)。
 # 兼容三种部署形态:
 #   ① 仓库源:     model-evo/_modelevo-shared              → 父目录(model-evo)下有 model-skills/
 #   ② 仓库软链接: model-skills/_modelevo-shared           → 父目录 basename == "model-skills"
@@ -29,10 +29,9 @@ elif os.path.isdir(os.path.join(_PARENT, "model-skills")):
 else:
     _MODEL_SKILLS_ROOT = _PARENT
 
-# 注入 feature-matching/scripts 到 sys.path 以复用 load_feature_list 的 CSV/TXT 解析
-_FM_SCRIPTS = os.path.join(_MODEL_SKILLS_ROOT, "feature-matching", "scripts")
-if _FM_SCRIPTS not in sys.path:
-    sys.path.insert(0, _FM_SCRIPTS)
+# gen_feature_list.py 已迁移到本目录(_modelevo-shared/scripts), 与 config_io 同层;
+# 各 skill 通过 _bootstrap 注入本目录后, `from gen_feature_list import load_feature_list`
+# 可直接解析, 无需再注入 feature-matching/scripts。
 
 # 疑似敏感信息正则: 18位身份证 / 11位手机号
 _SENSITIVE_PATTERNS = [
@@ -40,15 +39,9 @@ _SENSITIVE_PATTERNS = [
     re.compile(r"\b1[3-9]\d{9}\b"),    # 手机号
 ]
 
-# 样本集 JOIN 红线配置项(供各 skill 解析): model.join_keys 缺省时按 [ID列, 日期分区列] 补齐。
-JOIN_ID_COL_DEFAULT = "fuid"        # 默认用户粒度 ID 列
-JOIN_DATE_COL_FALLBACKS = ["f_p_date", "pday"]   # 日期分区列的候选名(f_p_date 为特征宽表通用分区列, pday 为历史兼容)
-
-
 def _load_feature_list(fpath: str) -> list:
-    """加载特征清单, 复用 feature-matching/scripts/gen_feature_list 的解析逻辑。
+    """加载特征清单, 复用本目录 gen_feature_list 的解析逻辑。
 
-    与各 skill _bootstrap 同款注入 sys.path 后 import gen_feature_list;
     .csv 取 feature_name 列(跳过表头), .txt 按行(跳过 # 注释), 去重保序。
     复用而非重写, 保证「特征清单如何解析」只有一处真相。
 
@@ -98,26 +91,25 @@ def check_sensitive(text: str) -> None:
 def validate_common(cfg: dict) -> None:
     """通用配置校验: 必填字段 + features 加载 + 敏感信息红线。
 
-    各 skill 在此基础上追加专有校验(如 model-training 校验 base_score_col)。
+    全仓库已废除 spark 取数, 仅支持 local_file 语义: 数据来自本地 parquet,
+    不再要求 sample_table / fetch_dt 必填。各 skill 在此基础上追加专有校验
+    (如 model-training 校验 base_score_col)。
 
     Args:
         cfg: load_config 返回的字典
 
     Raises:
-        ValueError: 缺必填项 / features 为空 / 命中敏感信息
+        ValueError: 缺必填项 / 命中敏感信息
     """
     model = cfg.get("model") or {}
-    mode = (model.get("mode") or "spark").lower()
-    is_local = mode == "local_file"
 
-    # spark 模式必填 sample_table + fetch_dt; local_file 模式靠本地 parquet, 不需要取数表
-    required = ["name", "dt_col"] if is_local else ["name", "sample_table", "dt_col", "fetch_dt"]
+    required = ["name", "dt_col"]
 
     has_label = bool(model.get("label_col")) or bool(model.get("label_expr"))
 
     for key in required:
         if not model.get(key):
-            raise ValueError(f"配置 model.{key} 缺失或为空 (mode={mode})")
+            raise ValueError(f"配置 model.{key} 缺失或为空")
     if not has_label:
         raise ValueError("配置 model.label_col 与 model.label_expr 必须至少填一个")
 
@@ -135,84 +127,22 @@ def validate_common(cfg: dict) -> None:
                 candidates.append(os.path.join(cfg_dir, features_file))
             candidates.append(os.path.join(_MODEL_SKILLS_ROOT, features_file))
             fpath = next((c for c in candidates if os.path.exists(c)), candidates[-1])
-        # 复用 feature-matching/scripts/gen_feature_list.load_feature_list 正确解析
+        # 复用 gen_feature_list.load_feature_list 正确解析
         # (.csv 取 feature_name 列 / .txt 按行 / 跳过 # 注释 / 去重保序),
         # 避免朴素按行读取把 CSV 表头 feature_name 当成特征名。
         # 透传 _config_dir 让 load_feature_list 的相对路径基准与本函数一致。
         if cfg.get("_config_dir"):
             os.environ["_CONFIG_DIR"] = cfg["_config_dir"]
         model["features"] = _load_feature_list(fpath)
-    # local_file 模式允许 features 为空: 视为"用本地 parquet 全部列(除 id/label/dt)"
-    if not model.get("features") and not model.get("feature_table") and not is_local:
-        raise ValueError("model.features 必填(auto_select 关闭); 或填 model.features_file / feature_list_source 从文件加载; 或填 model.feature_table 走特征表全列模式")
+    # local_file 语义: 允许 features 为空, 视为"用本地 parquet 全部列(除 id/label/dt)"
 
+    # fetch_dt 不强求; 若填仍按列表两元素校验
     fetch_dt = model.get("fetch_dt")
-    if is_local:
-        # local_file 模式 fetch_dt 不强求; 若填仍按列表两元素校验
-        if fetch_dt is not None and not (isinstance(fetch_dt, list) and len(fetch_dt) == 2):
-            raise ValueError("model.fetch_dt 须为 [起始, 结束] 两元素列表")
-    else:
-        if not (isinstance(fetch_dt, list) and len(fetch_dt) == 2):
-            raise ValueError("model.fetch_dt 须为 [起始, 结束] 两元素列表")
+    if fetch_dt is not None and not (isinstance(fetch_dt, list) and len(fetch_dt) == 2):
+        raise ValueError("model.fetch_dt 须为 [起始, 结束] 两元素列表")
 
     check_sensitive(model.get("where") or "")
     check_sensitive(model.get("sample_table") or "")
-
-    # 样本集 JOIN 红线: join_keys(可选)一经提供即校验必须含 ID+日期分区列;
-    # feature_table 模式未给 join_keys 时按 [user_no(≈fuid), dt_col] 兜底双键。
-    if model.get("feature_table"):
-        validate_model_join_keys(model)
-
-
-def resolve_join_keys(model: dict) -> list:
-    """解析模型配置的样本⋈特征 JOIN keys, 缺省补齐为 [ID列, 日期分区列]。
-
-    单表模式返回 None; local_file 模式仅记录用、不产生跨表联接。
-    供 fetch_spark / gen_fetch_command / skill CLI(yaml→spark-submit)统一消费,
-    保证「JOIN key 只有一处真相」。
-
-    Args:
-        model: config 的 model 段
-
-    Returns:
-        拼接模式的 join key 列表(list[str]), 或 None
-    """
-    if not (model.get("feature_table") or model.get("score_table")):
-        return None
-    jk = model.get("join_keys")
-    if isinstance(jk, (list, tuple)) and jk:
-        return [str(k).strip() for k in jk]
-    if isinstance(jk, str):
-        keys = [c.strip() for c in jk.split(",") if c.strip()]
-        if keys:
-            return keys
-    id_default = (model.get("id_cols") or [JOIN_ID_COL_DEFAULT])[0]
-    return [str(id_default), str(model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0]))]
-
-
-def validate_model_join_keys(model: dict) -> list:
-    """强制要求样本⋈特征 JOIN keys 满足【ID + 日期】红线的完整实现(可独立导入)。
-
-    规则(ModelEvo-RED-0102):
-      1. keys 必须含至少一个用户粒度 ID 类键(user_no/fuid/id_cols);
-      2. keys 必须包含日期分区列(dt_col; 若表中日期列名是 f_p_date, 需把该列传作 dt_col,
-         或显式放进 join_keys —— 脚本不做隐式猜列名);
-      3. 禁止仅以单个非日期列作为唯一连接键。
-    任一违反 → raise ValueError 硬拦截(不在运行期静默放行)。
-
-    Args:
-        model: config 的 model 段(feature_table/score_table/join_keys/dt_col/id_cols)
-
-    Raises:
-        ValueError: 样本集 JOIN 红线被触犯
-    """
-    resolved = resolve_join_keys(model)
-    if resolved is None:
-        return []
-    from fetch_spark import validate_join_keys as _vjk
-
-    _vjk(resolved, model.get("dt_col", JOIN_DATE_COL_FALLBACKS[0]))
-    return resolved
 
 
 def _parse_range_pair(name: str, value) -> tuple:
@@ -235,6 +165,10 @@ def _parse_range_pair(name: str, value) -> tuple:
 
 def validate_split_ranges(model: dict) -> None:
     """校验 model.split(可选): train/test/oot 三档 pday 区间的合法性。
+
+    切分唯一真相 = feature-analysis 的 model.split(feature_config.yaml), 由 feature-analysis
+    在切分前强制调用; task-spec 的 sample_config.*.yaml 的 split 段仅「记录/透传」,
+    调用本函数只校验记录区间的合法性, 不再驱动切分。
 
     仅当 model.split 存在时触发。约束(间隔逻辑):
       1. 三档齐全(train_range/test_range/oot_range 缺一报错)

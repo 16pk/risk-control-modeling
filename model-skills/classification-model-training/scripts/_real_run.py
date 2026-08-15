@@ -4,7 +4,7 @@
 用法: python scripts/_real_run.py <algo> <data_dir> <output_dir> <config_yaml>
 algo ∈ xgb|dnn|lr。config_yaml 指向输入 yaml(应已落 <session_dir>/new-models/{algo}-v{N}/config/train_config.yaml)。
 load_config + validate + 覆盖 model.algo, 调 run。
-data_dir 需含 sample.parquet(由 feature-matching 产出); 切分由本 skill 按 model.split 内部完成。
+data_dir 需含 sample.parquet(由 data-cleaning 产出); 切分由本 skill 按 model.split 内部完成。
 """
 import sys
 from pathlib import Path

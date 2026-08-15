@@ -78,7 +78,7 @@ def _find_baseline_jsons(
     """在多个 baseline_eval_dir 下 glob *_{split}_eval.json, 按 model_id 去重。
 
     去重规则: 文件名形如 `<model_id>_<split>_eval.json`, 同 model_id 跨目录命中
-    只保留首个(避免 model-recommend/yx_001/evaluation 与其软链/复制目录重复计入)。
+    只保留首个(避免软链/复制目录重复计入)。
     """
     hits: List[Path] = []
     seen_ids: set = set()
@@ -154,8 +154,8 @@ def invoke_comparison_stage(
 
     Args:
         layout: RunLayout (用 evaluation_dir + comparison_dir + run_name)
-        baseline_eval_dir: 基线评估目录(如 model-recommend/yx_001/evaluation),
-                          或多个目录的序列, 或含通配符(如 "model-recommend/*/evaluation");
+        baseline_eval_dir: 基线评估目录(如 <baseline>/yx_001/evaluation),
+                          或多个目录的序列, 或含通配符(如 "<baseline>/*/evaluation");
                           目录不存在或某 split 缺 JSON 时跳过该 split
         produced_by: manifest 来源标识
 

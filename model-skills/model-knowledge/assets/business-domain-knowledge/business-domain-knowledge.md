@@ -1,6 +1,6 @@
 # 公司的业务领域知识
 
-为建模流程提供必要的业务字段知识。下游 skill（classification-model-task-spec / feature-matching / feature-analysis / classification-model-recommend 等）在解析样本表、特征宽表、模型台账时，可参考本文件理解字段语义。
+为建模流程提供必要的业务字段知识。下游 skill（classification-model-task-spec / data-cleaning / feature-analysis 等）在解析样本表、特征宽表、模型台账时，可参考本文件理解字段语义。
 
 本文档做路由。
 
@@ -10,4 +10,4 @@
 | 用户运营相关任务 | 当任务为用户运营相关任务时触发，比如如下相关模型时：<br>动支意愿模型<br>流失预警模型<br>权益敏感度模型<br>触达敏感度模型 | user-operation-knowledge.md | 
 | 贷前贷中信贷场景 | 当任务为贷前（申请/授信/欺诈/新客准入）或贷中（贷中风险/还款/逾期/催收/复借/额度）建模任务时触发 | credit-loan-knowledge.md | 
 
-> `classification-model-recommend` 的模型推荐阶段由 Claude 直接读 `model-knowledge/assets/historical-model-knowledge/model_catalog.csv` 做语义筛选与排序，不再依赖额外的规则配置文件。台账字段语义见 `../historical-model-knowledge/historical-model-knowledge.md` 与 `classification-model-recommend/references/model-catalog-spec.md`。
+> 模型推荐阶段由 Claude 直接读 `model-knowledge/assets/historical-model-knowledge/model_catalog.csv` 做语义筛选与排序，不再依赖额外的规则配置文件。台账字段语义见 `../historical-model-knowledge/historical-model-knowledge.md`。

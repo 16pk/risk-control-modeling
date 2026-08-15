@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""run_sample_analysis_task_spec.py 测试: 标准流程 / 丢弃 / 参数校验。"""
+"""run_sample_analysis_task_spec.py 测试: 标准流程 / 参数校验 / 按月分段。"""
 import json
 import os
 import sys
@@ -38,16 +38,12 @@ def _make_sample(tmp_path, n_per_pday=10, pday_list=None, extra_rows=None, date_
     return p, df
 
 
-def _run_script(sample_path, tmp_path, train_range, test_range, oot_range,
-                model_name="test_model", timestamp="20260629-161231"):
+def _run_script(sample_path, tmp_path, model_name="test_model", timestamp="20260629-161231"):
     out_dir = tmp_path / "data-profile"
     out_dir.mkdir(exist_ok=True)
     cmd = [
         sys.executable, str(_SCRIPTS / "run_sample_analysis_task_spec.py"),
         "--sample", str(sample_path),
-        "--train-range", train_range,
-        "--test-range", test_range,
-        "--oot-range", oot_range,
         "--model-name", model_name,
         "--timestamp", timestamp,
         "--output-dir", str(out_dir),
@@ -58,59 +54,48 @@ def _run_script(sample_path, tmp_path, train_range, test_range, oot_range,
 
 
 def test_standard_flow(tmp_path):
-    """用例 1: 标准流程 5 个 pday, 60:20:20。"""
+    """用例 1: 标准流程, 纯样本分析(无切分), 产出 report/manifest。"""
     p, df = _make_sample(tmp_path)
-    proc, out_dir = _run_script(
-        p, tmp_path,
-        "20260401,20260510",   # train 覆盖 4/13 4/30 5/8
-        "20260511,20260520",   # eval 覆盖 5/16
-        "20260521,20260530",   # oot 覆盖 5/24
-    )
+    proc, out_dir = _run_script(p, tmp_path)
     assert proc.returncode == 0, "脚本失败: %s\n%s" % (proc.stdout, proc.stderr)
 
-    for fname in ["report.md", "report.xlsx", "_manifest.json", "_split_manifest.json",
-                  "train.parquet", "test.parquet", "oot.parquet"]:
+    for fname in ["report.md", "report.xlsx", "_manifest.json"]:
         assert (out_dir / fname).exists(), "缺文件: %s" % fname
+
+    # 切分后置: 不再产出三档 parquet 与 _split_manifest.json
+    for fname in ["_split_manifest.json", "train.parquet", "test.parquet", "oot.parquet"]:
+        assert not (out_dir / fname).exists(), "不应产出(已后置到 feature-analysis): %s" % fname
 
     manifest = json.loads((out_dir / "_manifest.json").read_text(encoding="utf-8"))
     assert manifest["sample_summary"]["total_samples"] == 50
     assert manifest["model_name"] == "test_model"
     assert manifest["timestamp"] == "20260629-161231"
     assert manifest["user_confirmed"] is False
-
-    sp = manifest["split"]["splits"]
-    total_split = sp["train"]["rows"] + sp["test"]["rows"] + sp["oot"]["rows"]
-    assert total_split == 50
-
-    train_df = pd.read_parquet(out_dir / "train.parquet")
-    test_df = pd.read_parquet(out_dir / "test.parquet")
-    oot_df = pd.read_parquet(out_dir / "oot.parquet")
-    assert len(train_df) + len(test_df) + len(oot_df) == 50
+    # 无切分统计字段
+    assert "split" not in manifest
+    assert "split_files" not in manifest
 
     report_md = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "样本分析报告" in report_md
     assert "test_model" in report_md
+    # 报告不再含切分段
+    assert "Train/Test/OOT 切分" not in report_md
 
-    assert "样本分析 + 切分完成" in proc.stdout
+    assert "样本分析完成" in proc.stdout
 
 
-def test_dropped_rows(tmp_path):
-    """用例 2: 区间外有行被丢弃。"""
-    extra = [{"fuid": "u_extra_%d" % i, "label": 0, "f_p_date": "20260601"} for i in range(10)]
-    p, df = _make_sample(tmp_path, extra_rows=extra)
-    proc, out_dir = _run_script(
-        p, tmp_path,
-        "20260401,20260510",
-        "20260511,20260520",
-        "20260521,20260530",
-    )
-    assert proc.returncode == 0, "脚本失败: %s\n%s" % (proc.stdout, proc.stderr)
-    assert "丢弃" in proc.stderr or "丢弃" in proc.stdout
-
-    manifest = json.loads((out_dir / "_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["split"]["dropped_rows"] == 10
-    sp = manifest["split"]["splits"]
-    assert sp["train"]["rows"] + sp["test"]["rows"] + sp["oot"]["rows"] == 50
+def test_monthly_segments(tmp_path):
+    """用例 2: segment_by_time 默认按月聚合(YYYYMM)。"""
+    p, df = _make_sample(tmp_path)  # pday 跨 202604 / 202605 两个月
+    args = type("Args", (), {"dt_col": "f_p_date", "label_col": "label"})()
+    segs = rsa.segment_by_time(df, args)
+    months = [s["pday"] for s in segs]
+    assert months == ["202604", "202605"]
+    # 202604: 4/13 + 4/30 = 20 样本(4 正); 202605: 5/08 + 5/16 + 5/24 = 30 样本(6 正)
+    assert segs[0]["samples"] == 20
+    assert segs[1]["samples"] == 30
+    assert segs[0]["positive"] == 4
+    assert segs[1]["positive"] == 6
 
 
 def test_missing_columns(tmp_path):
@@ -118,7 +103,7 @@ def test_missing_columns(tmp_path):
     df = pd.DataFrame([{"label": 0, "f_p_date": "20260413"} for _ in range(10)])
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
-    proc, _ = _run_script(p, tmp_path, "20260401,20260510", "20260511,20260520", "20260521,20260530")
+    proc, _ = _run_script(p, tmp_path)
     assert proc.returncode != 0
     assert "fuid" in proc.stdout or "fuid" in proc.stderr
 
@@ -129,7 +114,7 @@ def test_bad_label(tmp_path):
     df = pd.DataFrame(rows)
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
-    proc, _ = _run_script(p, tmp_path, "20260401,20260510", "20260511,20260520", "20260521,20260530")
+    proc, _ = _run_script(p, tmp_path)
     assert proc.returncode != 0
     assert "非法" in proc.stdout or "非法" in proc.stderr
 
@@ -140,76 +125,28 @@ def test_bad_pday(tmp_path):
     df = pd.DataFrame(rows)
     p = tmp_path / "sample.parquet"
     df.to_parquet(p, index=False)
-    proc, _ = _run_script(p, tmp_path, "20260401,20260510", "20260511,20260520", "20260521,20260530")
+    proc, _ = _run_script(p, tmp_path)
     assert proc.returncode != 0
-
-
-def test_overlap_ranges(tmp_path):
-    """用例 3d: 三档区间重叠。"""
-    p, _ = _make_sample(tmp_path)
-    proc, _ = _run_script(
-        p, tmp_path,
-        "20260401,20260515",   # 与 eval 重叠
-        "20260511,20260520",
-        "20260521,20260530",
-    )
-    assert proc.returncode != 0
-    assert "重叠" in proc.stdout or "重叠" in proc.stderr
 
 
 def test_sample_not_exist(tmp_path):
-    """用例 3e: --sample 文件不存在。"""
-    proc, _ = _run_script(
-        tmp_path / "nonexistent.parquet", tmp_path,
-        "20260401,20260510", "20260511,20260520", "20260521,20260530",
-    )
+    """用例 3d: --sample 文件不存在。"""
+    proc, _ = _run_script(tmp_path / "nonexistent.parquet", tmp_path)
     assert proc.returncode != 0
     assert "不存在" in proc.stdout or "不存在" in proc.stderr
 
 
-def test_parse_range_ok():
-    """parse_range 合法输入。"""
-    assert rsa.parse_range("20260401,20260510") == ("20260401", "20260510")
-    # 双格式兼容: YYYY-MM-DD 归一化为 8 位
-    assert rsa.parse_range("2026-04-01,2026-05-10") == ("20260401", "20260510")
-    # 混合格式(前 YYYY-MM-DD / 后 YYYYMMDD)
-    assert rsa.parse_range("2026-04-01,20260510") == ("20260401", "20260510")
-
-
-def test_parse_range_bad():
-    """parse_range 非法输入。"""
-    with pytest.raises(ValueError):
-        rsa.parse_range("20260401")
-    with pytest.raises(ValueError):
-        rsa.parse_range("2026,20260510")
-    with pytest.raises(ValueError):
-        rsa.parse_range("20260510,20260401")   # 起 > 止
-    with pytest.raises(ValueError):
-        rsa.parse_range("2026-13-01,20260510")   # 非法月份
-
-
-def test_validate_ranges_adjacent():
-    """相邻区间(允许)。"""
-    rsa.validate_ranges(("20260401", "20260510"), ("20260511", "20260520"), ("20260521", "20260530"))
-
-
-def test_validate_ranges_overlap():
-    """重叠区间(报错)。"""
-    with pytest.raises(ValueError):
-        rsa.validate_ranges(("20260401", "20260515"), ("20260511", "20260520"), ("20260521", "20260530"))
-
-
 def test_judge_stability():
     """稳定性判定阈值。"""
-    segs = [{"pday": "20260413", "positive_rate": 0.11},
-            {"pday": "20260430", "positive_rate": 0.13},
-            {"pday": "20260508", "positive_rate": 0.15}]
+    segs = [{"pday": "202604", "positive_rate": 0.11},
+            {"pday": "202605", "positive_rate": 0.13},
+            {"pday": "202606", "positive_rate": 0.15}]
     s = rsa.judge_stability(segs)
     assert s["volatility_pp"] == 4.0
     assert s["judgment"] == "显著波动"
 
-    segs2 = [{"pday": "20260413", "positive_rate": 0.13},
-             {"pday": "20260430", "positive_rate": 0.135}]
+    segs2 = [{"pday": "202604", "positive_rate": 0.13},
+             {"pday": "202605", "positive_rate": 0.135}]
     s2 = rsa.judge_stability(segs2)
     assert s2["judgment"] == "稳定"
 
@@ -222,19 +159,13 @@ def test_judge_sufficiency():
 
 
 def test_standard_flow_dual_format(tmp_path):
-    """用例 4: 数据列用 YYYY-MM-DD, 区间用混合双格式, 归一化切分正确。"""
+    """用例 4: 数据列用 YYYY-MM-DD, 按月分段归一化正确。"""
     p, df = _make_sample(tmp_path, date_format="%Y-%m-%d")
-    proc, out_dir = _run_script(
-        p, tmp_path,
-        "2026-04-01,2026-05-10",   # train 覆盖 2026-04-13/04-30/05-08
-        "2026-05-11,20260520",     # eval 覆盖 2026-05-16
-        "20260521,2026-05-30",     # oot 覆盖 2026-05-24
-    )
+    proc, out_dir = _run_script(p, tmp_path)
     assert proc.returncode == 0, "脚本失败: %s\n%s" % (proc.stdout, proc.stderr)
     manifest = json.loads((out_dir / "_manifest.json").read_text(encoding="utf-8"))
     assert manifest["sample_summary"]["total_samples"] == 50
-    sp = manifest["split"]["splits"]
-    assert sp["train"]["rows"] + sp["test"]["rows"] + sp["oot"]["rows"] == 50
-    assert sp["train"]["rows"] == 30 and sp["test"]["rows"] == 10 and sp["oot"]["rows"] == 10
-    # 月份聚合(>10 天时)应产出 YYYYMM 前缀
-    assert all(isinstance(s["pday"], str) and s["pday"][:4] == "2026" for s in manifest["time_segments"])
+    # 按月聚合产出 YYYYMM 前缀
+    segs = manifest["time_segments"]
+    assert all(isinstance(s["pday"], str) and len(s["pday"]) == 6 for s in segs)
+    assert [s["pday"] for s in segs] == ["202604", "202605"]

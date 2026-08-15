@@ -8,9 +8,8 @@
   model-comparison_all.{json,md,xlsx}     ← train+test+oot 合并对比
   _manifest.json
 
-数据源 (两处 glob, 合并后按 model_id 去重保序):
+数据源 (单处 glob, 按 model_id 去重保序):
   - <session_dir>/new-models/*/evaluation/*_<split>_eval.json
-  - <session_dir>/model-recommend/*/evaluation/*_<split>_eval.json
 
 all split 生成方式:
   对每个命中的模型，优先读取已有的 *_all_eval.json（由 eval_single.py --input-dir 产出）；
@@ -43,17 +42,12 @@ _SPLITS = ("oot", "all")
 
 
 def _glob_eval_jsons(session_dir: Path, split: str) -> List[Path]:
-    """扫两个来源, 按 model_id 去重保序。
+    """扫 new-models 来源, 按 model_id 去重保序。
 
-    来源 1: new-models/*/evaluation/*_<split>_eval.json (本 session 训练的新模型)
-    来源 2: model-recommend/*/evaluation/*_<split>_eval.json (推荐基线模型)
-
-    model_id = 文件名去掉 `_<split>_eval.json` 后缀。同 model_id 跨来源
-    只保留首个 (优先新模型目录, 避免与 model-recommend 重复计入)。
+    model_id = 文件名去掉 `_<split>_eval.json` 后缀。
     """
     sources = [
         session_dir / "new-models",
-        session_dir / "model-recommend",
     ]
     hits: List[Path] = []
     seen_ids: set = set()
@@ -89,7 +83,6 @@ def _generate_all_eval_jsons(session_dir: Path) -> List[Path]:
     """
     sources = [
         session_dir / "new-models",
-        session_dir / "model-recommend",
     ]
     # model_id -> {"train": path, "test": path, "oot": path}
     model_splits: Dict[str, Dict[str, Path]] = {}
@@ -597,7 +590,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="会话级 N-way 对比聚合")
     parser.add_argument(
         "--session-dir", required=True,
-        help="session_dir (含 new-models/ 和 model-recommend/ 两类子目录)",
+        help="session_dir (含 new-models/ 子目录)",
     )
     parser.add_argument(
         "--produced-by", default="skills/model-comparison",

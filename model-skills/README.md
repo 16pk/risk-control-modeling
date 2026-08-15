@@ -7,9 +7,9 @@
 ## 整体能力
 
 - **需求评估（分类守门）**：一次性提问评估需求是否为 classification / 拒绝（**本版本仅支持 classification**）
-- **分类建模**：需求规格化 → 历史模型推荐 → 特征准备 → baseline 模型开发（特征分析 / 训练 / 评估）→ LOOP 迭代式开发（确定优化方案 → 模型开发 → 横向对比，多轮循环）→ 收口归档 → **FICO 转换**（Stage 5，收口后询问，对 top1 上线候选概率分转 FICO 标准分）
+- **分类建模**：需求规格化 → 特征准备 → baseline 模型开发（特征分析 / 训练 / 评估）→ LOOP 迭代式开发（确定优化方案 → 模型开发 → 横向对比，多轮循环）→ 收口归档 → **定版模型打分**（Stage 5，收口后询问，用定版模型对清洗后数据跑推理产出违约概率分）→ **FICO 转换**（Stage 6，可选，收口后询问，对打分结果拟合校准转 FICO 标准分）
   - 当前已支持的优化方向：超参调优（Optuna）、特征筛选（PSI/IV/缺失率）、换算法（xgb / dnn / lr）；特征衍生、样本调整、loss 优化、网络结构优化等为规划中的演化方向
-- **共享能力**：特征匹配、特征分析（建模 pipeline 用 `feature-analysis`；用户主动发起样本/特征分析用 `credit-data-analysis` 分月体检）、模型知识库（业务领域知识 / 特征资产 / 历史模型档案 / 建模经验）
+- **共享能力**：数据清洗、特征分析（建模 pipeline 用 `feature-analysis`；用户主动发起样本/特征分析用 `credit-data-analysis` 分月体检）、模型知识库（业务领域知识 / 特征资产 / 历史模型档案 / 建模经验）
 - **会话连续性**：基于 `runs/` 下的 `_manifest.json` 自动推断进度，支持断点续跑
 
 
@@ -22,7 +22,6 @@ model-skills/
 │
 ├── classification-model-orchestration/  # 分类流程编排器（接收 routing_input）
 ├── classification-model-task-spec/      # 分类任务规格化 + 样本分析
-├── classification-model-recommend/      # 历史模型检索推荐
 ├── classification-model-development/    # 模型开发总控（迭代式编排）
 ├── classification-model-training/       # 模型训练（xgb / dnn / lr）
 ├── classification-model-tuning/         # 模型调参 / 特征筛选
@@ -30,9 +29,10 @@ model-skills/
 ├── classification-model-comparison/     # 多模型 N-way 对比
 ├── classification-model-report/         # session 聚合报告（6-sheet Excel）
 ├── credit-model-report/                 # 业务评估报告（打分 CSV → 回溯表/Lift/SWAP/打分分布，模板化 Excel）
-├── score-to-fico/                       # 概率分 → FICO 标准分转换（development Stage 5 收口后调起；亦可独立调用）
+├── score-to-fico/                       # 概率分 → FICO 标准分转换（development Stage 6 收口后调起，仅 pipeline 内、可选）
+├── model-scoring/                       # 定版模型打分（development Stage 5 调起，用定版模型对清洗后数据推理产出违约概率分）
 │
-├── feature-matching/                    # 特征匹配（拉样本+特征，跨流程共用）
+├── data-cleaning/                       # 数据清洗（哨兵值替换 + 用户日期去重 + 派生特征清单，跨流程共用）
 ├── feature-analysis/                    # 特征分析（建模 pipeline Stage 0：IV+AUC / 训练-OOT PSI / 切分，仅编排调起）
 ├── credit-data-analysis/                # 样本与特征分析（独立数据体检：分月 10-sheet Excel，用户主动发起时优先）
 ```
@@ -46,8 +46,9 @@ model-skills/
 | Skill | 说明 | 触发词示例 |
 |---|---|---|
 | `model-task-routing` | 建模需求评估守门，一次性提问评估需求是否为 classification / 拒绝，构造 routing_input JSON 透传下游 | 建模、新模型、模型需求、帮我建模、模型立项 |
-| `feature-matching` | 从 Spark 宽表拉取样本+特征+标签，生成 spark-submit 提交脚本，确认后自动提交集群落 `sample.parquet`；或 `local_file` 模式下从本地 parquet/csv 直接转写+派生 `feature-list.csv` | 取数、拉样本、拉宽表、准备建模样本 |
+| `data-cleaning` | 数据清洗：哨兵值/无效值替换为 NaN + 按用户+日期去重 + 派生 `feature-list.csv`，产出清洗后 `sample.parquet` 与可复用清洗方案（`cleaning-scheme.json` + `cleaning-report.md`）。**仅由编排层调起，不设独立触发词** | （无独立触发词；`classification-model-orchestration` 调起） |
 | `feature-analysis` | 对候选特征做基础统计 / 单变量预测力（IV+AUC）/ 训练-OOT 稳定性（PSI）报告，仅产报告不自动剔特征，并按配置切分 Train/Test/OOT。**仅建模 pipeline Stage 0 使用，由 development 编排调起，不响应独立关键词触发** | （无独立触发词；`classification-model-development` Stage 0 调起） |
+| `model-scoring` | 定版模型打分：用 Stage 4 收口确认的定版模型（`finalized_model.json`）对清洗后 `sample.parquet` 跑推理，产出违约概率分 `score`，透传所有非特征列。**仅建模 pipeline Stage 5 使用，由 development 编排调起，不响应独立关键词触发** | （无独立触发词；`classification-model-development` Stage 5 调起） |
 | `credit-data-analysis` | 独立数据体检：分月视角 10-sheet Excel（样本分布 / 特征分布 / 覆盖率 / 均值 / min/max/std/Nunique / PSI / IV）。用户主动发起样本及特征分析任务时**优先调用** | 样本分析、特征分析、特征IV、特征PSI、数据体检、分月监控、逾期率走势 |
 | `model-knowledge` | 沉淀建模方法论、业务领域知识、特征资产、历史模型档案与建模经验教训，供检索复用 | 查历史建模经验、归档建模知识、查业务字段定义 |
 
@@ -55,9 +56,8 @@ model-skills/
 
 | Skill | 说明 |
 |---|---|
-| `classification-model-orchestration` | 分类流程总调度，承接 routing_input，串联 task-spec → recommend → feature-matching → development，管理 session 目录与断点续跑 |
+| `classification-model-orchestration` | 分类流程总调度，承接 routing_input，串联 task-spec → data-cleaning → development，管理 session 目录与断点续跑 |
 | `classification-model-task-spec` | 需求挖掘 + 样本分析，输出 4 段式 task-spec.md 与 `_manifest.json`，拉取样本（仅 fuid/label/f_p_date + 补充字段）并切分 Train/Test/OOT（OOT 按时间顺序且晚于训练窗；train/val 开发集可随机切分保证同分布） |
-| `classification-model-recommend` | 从历史模型台账检索可复用模型，语义筛选排序 + 适配度评估，可选委托 evaluation 产三档评估 |
 | `classification-model-development` | 开发总控，按 Stage 0~4 迭代式编排 feature-analysis / training / tuning / comparison，管理路径接力、决策点询问、report.md 回填 |
 | `classification-model-training` | 训练 xgb / dnn / lr 模型，读上游 feature-analysis 切分数据，产八阶段产物，并与历史 baseline 做 AUC/KS/分档多维对比 |
 | `classification-model-tuning` | 基于 baseline run 做超参调优（Optuna）或特征筛选（PSI/IV/缺失率），产 `-tuned` / `-feat` 新 run |
@@ -65,7 +65,7 @@ model-skills/
 | `classification-model-comparison` | 多模型 N-way 横向对比，消费 evaluation 的 JSON 做 delta 分析与缺口清单，输出含条件格式的 Excel |
 | `classification-model-report` | 聚合 session 内建模信息产出 6-sheet Excel 报告，用户主动调起 |
 | `credit-model-report` | 从打分 CSV 生成**业务评估报告**（Excel：回溯表/建模信息/KS/特征重要性/Lift+SWAP/打分分布 PSI+分桶+分段逾期率），支持新 vs 基线模型 SWAP 迁移与客群过滤，模板化输出 |
-| `score-to-fico` | **概率分 → FICO 标准分转换**（LR 校准 + 标准分映射，范围约 [400,780]，分高险低）。两种入口：① development Stage 5 收口后总是询问调起，消费 top1 上线候选 run 的 predictions，产 `{run}/fico/`；② 独立调用（输入含概率分列+标签列样本 → coef.json + 打分 + 拟合方案）。触发词：转fico分、概率分转标准分、校准概率 |
+| `score-to-fico` | **概率分 → FICO 标准分转换**（LR 校准 + 标准分映射，范围约 [400,780]，分高险低）。**仅 pipeline 内调用、可选**：development Stage 6 收口后总是询问调起，消费 model-scoring 打分结果（含 label + score），默认全量样本 + Y 拟合校准，产 session 根 `fico/` |
 
 > 模型上线（`model-publication`）、指标匹配（`metric-matching`）、演化方案（`classification-model-evolution-plan`）、分群建模（`classification-segment-model`）等为规划中的能力，**当前尚未实现**，不包含在本次交付内。
 
@@ -82,8 +82,7 @@ model-task-routing（一次性提问 Q1/Q2/Q3 → 评估需求是否为 classifi
    │                          ├─ 会话启动检查（扫描 runs/ → _manifest.json 推断进度）
    │                          ├─ classification-model-task-spec（需求确认 + 样本分析）
    │                          ├─ 创建任务目录 + 初始化 report.md
-   │                          ├─ classification-model-recommend（历史模型推荐）
-   │                          ├─ feature-matching（拉特征宽表 + 派生 feature-list.csv）
+   │                          ├─ data-cleaning（数据清洗：哨兵值替换 + 去重 + 派生 feature-list.csv）
    │                          └─ 建模决策（询问用户）
    │                                  │
    │                                  ├── 是 ──► classification-model-development
@@ -103,18 +102,16 @@ model-task-routing（一次性提问 Q1/Q2/Q3 → 评估需求是否为 classifi
 参考仓库主[`model-evo/README.md`](../README.md)的前置依赖部分。
 
 
-### 大数据取数（可选）
+### 数据前置
 
-`feature-matching` / `classification-model-task-spec` / `classification-model-recommend` 的 **spark 模式**依赖 Spark 3.x + YARN + HDFS 集群、PySpark 与 Kerberos 认证，资源默认值见 [`_modelevo-shared/scripts/spark_defaults.template.yaml`](../_modelevo-shared/scripts/spark_defaults.template.yaml)（复制为 `spark_defaults.yaml` 并填本集群值，不入库）。**无集群时**用 `--mode local_file` 直接读本地 parquet/csv，可跑通除「Spark 取数」外的全部流程。
+全仓库已废除 spark 取数，建模 pipeline 仅支持本地文件模式（parquet/csv/feather），无需 Spark 集群。
 
 ### 上下游数据前置
 
 | 场景 | 前置数据 |
 |---|---|
-| 分类建模（local_file） | 一份含 `id + 特征列 + label`（可含日期列）的 parquet/csv |
-| 分类建模（local_file 演示） | 内置演示数据 `data/demo/credit_risk_demo.csv`（1000 行 × 18 列，A 卡申请评分卡风格，含 `apply_date`/`is_bad`，坏率 9.6%，含少量缺失值），可先跑通全流程再替换真实数据 |
-| 分类建模（spark） | 数仓样本表（含 `fuid/label/f_p_date`）+ 特征宽表 |
-| 历史模型推荐 | `model-knowledge` 台账 `model_catalog.csv` 中有可检索的历史模型条目 |
+| 分类建模 | 一份含 `id + 特征列 + label`（可含日期列）的 parquet/csv/feather |
+| 分类建模（演示） | 内置演示数据 `data/demo/credit_risk_demo.csv`（1000 行 × 18 列，A 卡申请评分卡风格，含 `apply_date`/`is_bad`，坏率 9.6%，含少量缺失值），可先跑通全流程再替换真实数据 |
 
 ## 使用说明
 
@@ -131,15 +128,14 @@ runs/20260624-114630-draw_willingness/
 │   ├── task-spec.md                       # 4 段式需求规格
 │   └── _manifest.json                     # 结构化核心信息（含 routing 溯源字段）
 ├── data-profile/
-│   ├── report.md / report.xlsx            # 样本分析报告
+│   ├── report.md / report.xlsx            # 样本分析报告（纯样本分析，不含切分）
 │   ├── _manifest.json
-│   ├── _split_manifest.json               # 切分清单
 │   └── {model_name}_sample_{YYYYMMDD}.parquet
-├── model-recommend/                       # 历史模型推荐结果（local_file 模式下跳过）
 ├── sample-features/
-│   ├── feature-matching/
-│   │   ├── sample.parquet                 # 全量样本（id + features + label）
-│   │   └── feature-list.csv
+│   ├── data-cleaning/
+│   │   ├── sample.parquet                 # 清洗后样本（id + features + label）
+│   │   ├── feature-list.csv
+│   │   └── cleaning-scheme.json           # 可复用清洗方案
 │   ├── feature-analysis/
 │   │   └── analysis/{stats,iv_table,psi_table}.csv
 │   ├── credit-data-analysis/            # 独立数据体检（可选，用户主动发起时）
@@ -153,9 +149,16 @@ runs/20260624-114630-draw_willingness/
 │       ├── comparison/ · logs/
 │       └── _manifest.json
 ├── model-comparison/                      # N-way 横向对比产物
+├── finalized_model.json                   # 定版标记（Stage 4 收口确认上线候选后落）
+├── scoring/                               # 定版模型打分产物（Stage 5 model-scoring）
+│   └── score_sample.parquet               # 透传非特征列 + score 概率列
+├── fico/                                  # FICO 转换产物（Stage 6 score-to-fico，可选）
+│   ├── coef.json                          # LR 校准参数
+│   ├── fico_predictions.parquet           # 转分结果（含 bscore）
+│   └── fitting-summary.{json,md}          # 拟合方案
 └── scripts/                               # 各阶段执行命令 + 脚本源码快照（record_stage.py 落）
     ├── _manifest.json                     # 集中清单（按 stage 索引）
-    └── {stage}/                           # task-spec / feature-matching / feature-analysis / training / tuning / comparison / fico / fill_report
+    └── {stage}/                           # task-spec / data-cleaning / feature-analysis / training / tuning / comparison / finalize / scoring / fico / fill_report
         ├── <入口脚本>.py                  # 源码快照
         └── command.json                   # 执行命令详情（cmd/timestamp/sha256/python）
 ```
@@ -170,17 +173,17 @@ runs/20260624-114630-draw_willingness/
 | 元信息 | `_manifest.json` | 固定名称 |
 | 项目报告 | `report.md` | 固定名称 |
 
-命名前缀规则：仅 classification 专属 skill 加 `classification-` 前缀，跨流程共享 skill（`model-task-routing`、`feature-matching`、`feature-analysis`、`credit-data-analysis`、`model-knowledge`）不加前缀。每个 `SKILL.md` 的 `name` 字段必须等于其所在目录名。
+命名前缀规则：仅 classification 专属 skill 加 `classification-` 前缀，跨流程共享 skill（`model-task-routing`、`data-cleaning`、`feature-analysis`、`credit-data-analysis`、`model-knowledge`、`model-scoring`、`score-to-fico`）不加前缀。每个 `SKILL.md` 的 `name` 字段必须等于其所在目录名。
 
 ## 公共代码
 
 | 位置 | 作用 |
 |---|---|
 | `model-evo/_modelevo-shared/scripts/config_io.py` | yaml 配置读写 + 必填校验 + 数据安全红线（`load_config` / `validate_common` / `check_sensitive`，命中身份证/手机号即抛错） |
-| `model-evo/_modelevo-shared/scripts/fetch_spark.py` | PySpark 集群取数 |
-| `model-evo/_modelevo-shared/scripts/gen_fetch_command.py` | spark-submit wrapper 脚本生成 |
+| `model-evo/_modelevo-shared/scripts/date_utils.py` | 日期归一化工具（YYYY-MM-DD / YYYYMMDD 双兼容，`parse_date` / `parse_date_pair` / `month_prefix` / `shift_days` 等） |
+| `model-evo/_modelevo-shared/scripts/gen_feature_list.py` | 特征清单加载/识别（`.csv` 取 `feature_name` 列 / `.txt` 按行 / 跳过注释 / 去重保序） |
+| `model-evo/_modelevo-shared/scripts/feature_knowledge.py` | 特征清单索引解析（按 feature_table / business_domain 从 feature-knowledge.md 匹配） |
 | `model-evo/_modelevo-shared/scripts/record_stage.py` | pipeline 阶段脚本快照记录：把「执行命令 + 入口脚本源码快照」落盘到 `<session>/scripts/<stage>/`（集中清单 `_manifest.json`，保证可复现） |
-| `model-evo/_modelevo-shared/scripts/spark_defaults.template.yaml` | Spark 提交默认资源档模板（复制为 `spark_defaults.yaml` 后填本集群值，不入库） |
 | `model-evo/_modelevo-shared/tests/` | 公共代码单元测试 |
 
 
@@ -202,7 +205,7 @@ runs/20260624-114630-draw_willingness/
 
 ### 接入 MCP 数据源 / 外部服务的契约
 
-- **数据源类 MCP**（数仓、特征平台等）：拉取结果须符合 `feature-matching` 的样本契约——含 `id + 特征列 + label`（可含日期列），落盘 `sample.parquet` + `feature-list.csv`，或直接透传已有格式；同时在本 README「上下游数据前置」表格登记新数据来源
+- **数据源类 MCP**（数仓、特征平台等）：拉取结果须符合 `data-cleaning` 的样本契约——含 `id + 特征列 + label`（可含日期列），落盘 `sample.parquet` + `feature-list.csv`，或直接透传已有格式；同时在本 README「上下游数据前置」表格登记新数据来源
 - **外部服务类 MCP**（模型服务、指标平台、监控告警等）：在对应 skill 的 SKILL.md 中声明调用方式与参数
 - **数据安全红线**：任何 MCP 取数不得透出身份证 / 手机号等明文个人数据（`config_io.check_sensitive` 拦截）
 

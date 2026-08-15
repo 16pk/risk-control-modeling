@@ -40,7 +40,7 @@ python <skill_dir>/scripts/aggregate_session_comparison.py \
   --produced-by skills/model-comparison
 ```
 
-脚本扫描 `new-models/*/evaluation/` 和 `model-recommend/*/evaluation/` 下的 eval JSON，对 oot 和 all 两档分别调 `compare_models.py` 对比，最终合成一份 combined 输出（中间产物落临时目录自动清理）。
+脚本扫描 `new-models/*/evaluation/` 下的 eval JSON，对 oot 和 all 两档分别调 `compare_models.py` 对比，最终合成一份 combined 输出（中间产物落临时目录自动清理）。
 
 ### 2.1 脚本快照记录(强制,手动跑时)
 
@@ -71,7 +71,7 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 
 | 参数 | 必选 | 默认值 | 说明 |
 |---|:---:|---|---|
-| `--session-dir` | ✅ | - | session 根目录，需含 `new-models/` 和/或 `model-recommend/` 子目录 |
+| `--session-dir` | ✅ | - | session 根目录，需含 `new-models/` 子目录 |
 | `--produced-by` | 否 | `skills/model-comparison` | 写入 `_manifest.json` 的来源标识 |
 
 ## 4. 输出产物
@@ -141,6 +141,6 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 | all eval JSON 不存在 | 回退调用 `merge_eval_splits.py` 从 train/test/oot 合并生成；正常流程由 `eval_single.py --input-dir` 直接产出，不经过此路径 |
 | `compare_models.py` 找不到 | `aggregate_session_comparison.py` 抛 `FileNotFoundError` 并终止 |
 | `session_dir` 不存在 | `aggregate_session_comparison.py` 抛 `FileNotFoundError` |
-| `new-models/` 与 `model-recommend/` 均不存在 | 停止执行，提示检查 `--session-dir` |
+| `new-models/` 不存在 | 停止执行，提示检查 `--session-dir` |
 | `compare_models.py` 子进程非 0 退出 | `aggregate_session_comparison.py` 打印其 stdout/stderr 后抛 `RuntimeError` |
 | 预期产物文件未生成 | `aggregate_session_comparison.py` 抛 `FileNotFoundError` 并附 `compare_models` 的 stdout |

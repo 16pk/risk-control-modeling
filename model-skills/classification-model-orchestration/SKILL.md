@@ -45,7 +45,7 @@ description: 分类建模流程编排（覆盖营销/增长/获客/运营/风控
 
 扫描 `runs/` 下所有 `{timestamp}-{model_name}` 命名的任务文件夹，按时间戳倒序取最近 5 个，对每个文件夹读 `task-spec/_manifest.json` 推断进度，主动询问用户继续历史或新建。**用户已表达"新建"/"继续某 session"等意图的，直接按其意图执行。**
 
-进度推断规则（8 阶段：task-spec / 样本分析 / model-recommend / feature-matching / feature-analysis / Dev Stage 1~3）详见 [references/session-progress-inference.md](references/session-progress-inference.md)。
+进度推断规则（7 阶段：task-spec / 样本分析 / data-cleaning / feature-analysis / Dev Stage 1~3）详见 [references/session-progress-inference.md](references/session-progress-inference.md)。
 
 ### 3.2 数据源与澄清模式
 
@@ -59,7 +59,7 @@ description: 分类建模流程编排（覆盖营销/增长/获客/运营/风控
 
 ### 3.3 需求确认 + 样本分析 + 创建目录 + report.md 初始化
 
-调用 `classification-model-task-spec`，**跳过其问题类型判定**（上游已判定），将 routing_input JSON 透传，`mode=local_file`。task-spec 自身的 `fetch_sample_task_spec.py --mode local_file` 拉本地样本，`run_sample_analysis_task_spec.py` 做切分+分析。所有需求维度（WHO/WHAT/HOW GOOD/CONSTRAINTS/SAMPLE）及切分方式均须向用户逐一澄清，不得用默认值替代。
+调用 `classification-model-task-spec`，**跳过其问题类型判定**（上游已判定），将 routing_input JSON 透传，`mode=local_file`。task-spec 自身的 `fetch_sample_task_spec.py --mode local_file` 拉本地样本，`run_sample_analysis_task_spec.py` 做纯样本分析（切分已后置到 feature-analysis）。所有需求维度（WHO/WHAT/HOW GOOD/CONSTRAINTS/SAMPLE）及切分方式均须向用户逐一澄清，不得用默认值替代。
 
 **完成标准**：样本分析通过。
 
@@ -79,7 +79,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 mkdir -p runs/${TIMESTAMP}-{model_name}/{task-spec,data-profile}
 ```
 
-**report.md 章节结构**（7 节固定顺序 + 1 附录，编号统一汉字 `一、二、...七、`，与 `fill_report.py` 锚点对齐）：
+**report.md 章节结构**（6 节固定顺序 + 1 附录，编号统一汉字 `一、二、...六、`，与 `fill_report.py` 锚点对齐）：
 
 ```markdown
 # 建模全流程报告 — {model_name}
@@ -87,29 +87,30 @@ mkdir -p runs/${TIMESTAMP}-{model_name}/{task-spec,data-profile}
 
 ## 一、需求        ← task-spec 完成后填
 ## 二、样本        ← data-profile 完成后填
-## 三、历史模型推荐 ← recommend 完成后填
-## 四、特征宽表    ← fill_report.py --section IV 回填
-## 五、特征分析    ← fill_report.py --section V 回填
-## 六、模型迭代    ← fill_report.py --section VI 回填
-## 七、横向对比    ← fill_report.py --section VII 回填
+## 三、特征宽表    ← fill_report.py --section IV 回填
+## 四、特征分析    ← fill_report.py --section V 回填
+## 五、模型迭代    ← fill_report.py --section VI 回填
+## 六、横向对比    ← fill_report.py --section VII 回填
 ## 附录：待处理项与下一步建议
 ```
 
-> `fill_report.py --section` key（IV/V/VI/VII）是脚本内部 key，对应 report.md 第「四~七」节，**不错位**。一/二/三 节 + 附录由 orchestration 自填。
+> `fill_report.py --section` key（IV/V/VI/VII）是脚本内部 key，对应 report.md 第「三~六」节，**不错位**。一/二 节 + 附录由 orchestration 自填。
 
 **子目录内容规范**（v2 交付分层：🟢 交付层 / 🟡 可复现层 / 🔵 缓存层，详见 `classification-model-training` 4.0 节）：
 
 | 子目录 | 产出 skill | 关键内容 | 完成标志 |
 |--------|-----------|---------|---------|
 | `task-spec/` | task-spec | `task-spec.md` + `_manifest.json` + `.done` | `.done` 存在 |
-| `data-profile/` | task-spec | `report.xlsx`（report.md 保留为内部缓存）+ `_manifest.json` + `_split_manifest.json` + `{model_name}_sample_*.parquet`；**三档 parquet 为缓存层**（与 `sample-features/splits/` 重复，以 splits/ 为准，不交付） | `_manifest.json` 存在 |
-| `model-recommend/` | recommend | 本地文件模式下**不创建此目录**（历史模型推荐整步跳过） | — |
-| `sample-features/feature-matching/` | feature-matching | `sample.parquet` + `feature-list.csv` + `sample_config.<model_name>.yaml`（sample.parquet 为 session 内唯一样本，**源副本/全量样本不再另存**） | `sample.parquet` + `feature-list.csv` 存在 |
+| `data-profile/` | task-spec | `report.xlsx`（report.md 保留为内部缓存）+ `_manifest.json` + `{model_name}_sample_*.parquet`；**不再产三档 parquet 与 `_split_manifest.json`**（切分已后置到 feature-analysis） | `_manifest.json` 存在 |
+| `sample-features/data-cleaning/` | data-cleaning | `sample.parquet`（清洗后）+ `feature-list.csv` + `cleaning-scheme.json` + `cleaning-report.md`（sample.parquet 为 session 内唯一样本，**源副本/全量样本不再另存**） | `sample.parquet` + `feature-list.csv` 存在 |
 | `sample-features/feature-analysis/` | feature-analysis | `feature_config.yaml` + `analysis/`（report.xlsx + _manifest + stats/iv/psi/woe/feature-profile/feature-quality 表；**明细表为缓存层**，对外以 report.xlsx 呈现） | `analysis/_manifest.json` 存在 |
 | `sample-features/splits/` | feature-analysis | `train/test/oot.parquet`（**session 内唯一切分**） | 三个 parquet 存在 |
 | `new-models/{algo}-{run_label}/` | development | `config.json` + `model/` + `features/` + `evaluation/` + `predictions/` + `explainability/` + `logs/run.log` + `report.md`；**交付层 = model + evaluation/*.xlsx + report.md**，predictions/explainability/features 为缓存层（评估依赖，保留不交付） | `config.json` + `model/` + `evaluation/` 存在 |
 | `model-comparison/` | Dev Stage 3 | `model-comparison_{all,oot}.{md,json,xlsx}` + `对比报告.{json,md,xlsx}` + `_manifest.json`（仅 oot/all 两档，无 train/test） | `_manifest.json` 存在 |
-| `scripts/` | 各阶段(record_stage.py) | **执行命令 + 脚本源码快照**（🟡 可复现层）：按阶段子目录 `{task-spec,feature-matching,feature-analysis,training,tuning,comparison,fico,fill_report}/`，每阶段含入口脚本 .py 快照 + `command.json`；集中清单 `scripts/_manifest.json` | `scripts/_manifest.json` 存在 |
+| `finalized_model.json`（session 根） | Dev Stage 4 | 定版标记（run_name/algo/model_path/feature_names/oot_auc） | 文件存在 |
+| `scoring/` | Dev Stage 5 (model-scoring) | `score_sample.parquet`（透传非特征列 + score 概率列） | `score_sample.parquet` 存在 |
+| `fico/` | Dev Stage 6 (score-to-fico, 可选) | `coef.json` + `fico_predictions.parquet` + `fitting-summary.{json,md}` | `fitting-summary.json` 存在 |
+| `scripts/` | 各阶段(record_stage.py) | **执行命令 + 脚本源码快照**（🟡 可复现层）：按阶段子目录 `{task-spec,data-cleaning,feature-analysis,training,tuning,comparison,finalize,scoring,fico,fill_report}/`，每阶段含入口脚本 .py 快照 + `command.json`；集中清单 `scripts/_manifest.json` | `scripts/_manifest.json` 存在 |
 | `deliverables.md`（session 根） | 收口产出 | **对外交付清单**：仅列交付层文件（总 report.md + 各 run evaluation xlsx + model pkl + 特征分析 report.xlsx + `scripts/` 各阶段脚本快照），其余分层产物显式声明"保留不交付" | 收口时存在 |
 
 **deliverables.md 产出规范（v2 新增）**：
@@ -135,20 +136,21 @@ mkdir -p runs/${TIMESTAMP}-{model_name}/{task-spec,data-profile}
 配置 yaml / 特征清单 / splits / manifest / logs / `scripts/` 各阶段明细（`command.json`）—— 保证可复跑与断点续跑，删除不影响交付。
 
 ## 🔵 缓存层（保留，不交付）
-predictions / explainability / analysis 明细表 / data-profile 三档 parquet（与 splits 重复）——内部中间产物。
+predictions / explainability / analysis 明细表——内部中间产物。
 ```
 
 - **约束**：deliverables.md 只列**实际存在**的文件；某 run 无对应产物（如未产 feature-analysis xlsx）则不列该项。
 
-### 3.4 特征拉取（跳过历史模型推荐）
+### 3.4 数据清洗
 
-- **classification-model-recommend**：本地文件模式下**整步跳过**，不创建 `model-recommend/` 目录
-- **feature-matching**：
-  - 调 `feature-matching/scripts/fetch_sample.py --mode local_file`，内部走 `_local_sample_to_parquet`（复用本地 parquet/csv）+ `derive_feature_list.py`（推导特征列表），**不做宽表拉取**
-  - 落 `sample-features/feature-matching/sample.parquet` + `feature-list.csv`，**不切分三档**（切分由 feature-analysis 完成）
-- 完成后调 `python classification-model-development/scripts/fill_report.py --session_dir <session_dir> --section IV` 回填 report.md 第「四」节
+- **data-cleaning**：
+  - 调 `data-cleaning/scripts/clean_data.py`，内部完成「哨兵值替换为 NaN + 按用户+日期去重 + 派生 feature-list.csv」，**不做宽表拉取**
+  - id 列 / 日期列 / 标签列在数据探查时由大模型自主识别 + 用户确认后经 `--id-col/--dt-col/--label-col` 传入
+  - 发现异常值时任务暂停、弹提示让用户确认是否继续（强门禁）
+  - 落 `sample-features/data-cleaning/sample.parquet` + `feature-list.csv` + `cleaning-scheme.json` + `cleaning-report.md`，**不切分三档**（切分由 feature-analysis 完成）
+- 完成后调 `python classification-model-development/scripts/fill_report.py --session_dir <session_dir> --section IV` 回填 report.md 第「三」节
 - **脚本快照记录(强制)**：每次 python CLI 执行成功后,调用共享工具 `record_stage.py` 把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/<stage>/`(集中清单 `<session_dir>/scripts/_manifest.json`)。本 skill 层至少记录两条:
-  - `feature-matching` 阶段: `--stage feature-matching --script feature-matching/scripts/fetch_sample.py --cmd "<实际执行的 fetch_sample 命令>"`
+  - `data-cleaning` 阶段: `--stage data-cleaning --script data-cleaning/scripts/clean_data.py --cmd "<实际执行的 clean_data 命令>"`
   - 回填阶段: `--stage fill_report --script classification-model-development/scripts/fill_report.py --cmd "<实际执行的 fill_report 命令>"`(development 阶段执行的 fill_report 同理记录,同一 stage 重复执行以最新一次为准)
 
 ### 3.5 建模决策
@@ -164,9 +166,8 @@ predictions / explainability / analysis 明细表 / data-profile 三档 parquet�
 
 1. 调起 task-spec 透传 `mode=local_file` → SAMPLE 维度问本地路径 + 列名（`--label-col`/`--dt-col`/`--id-cols`），调 `fetch_sample_task_spec.py --mode local_file`；**所有需求维度（WHO/WHAT/HOW GOOD/CONSTRAINTS/SAMPLE）及切分方式均须向用户逐一澄清，不使用默认值**
 2. task-spec 完成后进入创建目录 + report.md 初始化，出口校验同样强制生效
-3. **跳过 recommend**（见 3.4 节）
-4. 调起 feature-matching，调 `feature-matching/scripts/fetch_sample.py --mode local_file`（不切分三档）
-5. 进入建模决策（3.5 节）
+3. 调起 data-cleaning，调 `data-cleaning/scripts/clean_data.py`（哨兵值替换 + 去重，不切分三档）
+4. 进入建模决策（3.5 节）
 
 ### 3.7 流程速览
 
@@ -176,8 +177,7 @@ model-task-routing（总入口）
   → 会话启动检查（3.1）
   → 需求确认 + 样本分析 + 创建目录 + report.md 初始化（3.3，本地文件、全澄清）
       → task-spec 所有维度向用户澄清（SAMPLE 问本地路径+列名；切分必问）
-      → recommend 整步跳过（3.4）
-      → feature-matching（--mode local_file，复用本地 parquet + 推导特征列表）
+      → data-cleaning（哨兵值替换 + 去重 + 派生特征列表）
       → 建模决策（3.5，必问）
       → development（Stage 0~4）
 ```
@@ -189,9 +189,8 @@ model-task-routing（总入口）
 ```
 runs/{timestamp}-{model_name}/
 ├── task-spec/                  # task-spec.md + _manifest.json + .done
-├── data-profile/               # report.xlsx + _manifest.json + _split_manifest.json + 全量样本 parquet（三档 parquet 为缓存层）
-├── model-recommend/            # 本地文件模式下不创建（历史模型推荐整步跳过）
-├── sample-features/feature-matching/    # sample.parquet（唯一） + feature-list.csv + sample_config.<model_name>.yaml
+├── data-profile/               # report.xlsx + _manifest.json + 全量样本 parquet（不再产三档 parquet）
+├── sample-features/data-cleaning/      # sample.parquet（清洗后，唯一） + feature-list.csv + cleaning-scheme.json + cleaning-report.md
 ├── sample-features/feature-analysis/   # feature_config.yaml + analysis/（report.xlsx + 明细表缓存层）
 ├── sample-features/splits/    # train/test/oot.parquet（唯一切分）
 ├── new-models/{algo}-{run_label}/       # development 产（交付层 = model + evaluation/*.xlsx + report.md）
@@ -217,8 +216,7 @@ runs/{timestamp}-{model_name}/
 
 - `model-task-routing` — **上游**，建模流程总入口，判定 task_type 为 classification 后拉起本 skill
 - `classification-model-task-spec` — 需求挖掘与确认 + 样本分析（本地文件模式，`--mode local_file`）
-- `classification-model-recommend` — 历史模型检索推荐（本地文件模式下跳过，不创建目录）
-- `feature-matching` — **强制**：本地文件模式复用本地 parquet/csv（`--mode local_file`）+ 推导特征列表，不做宽表拉取，不切分三档
+- `data-cleaning` — **强制**：承接本地数据文件，完成哨兵值替换 + 用户日期去重 + 派生特征列表，不切分三档
 - `classification-model-development` — 用户确认后调用，模型开发总控，按迭代式流程编排子 skill（Stage 0~4）
 
 ## 6. 执行约束
@@ -233,15 +231,11 @@ runs/{timestamp}-{model_name}/
 
 `task-spec/_manifest.json` 存在但 `.done` 缺失 → 提示"task-spec 阶段可能半途中断，需补写三件套后再继续"。
 
-### 7.2 recommend 目录缺失误判
-
-本地文件模式下 `model-recommend/` 目录本就不创建（recommend 整步跳过），进度推断时不得将"该目录为空/缺失"误判为"recommend 待跑"。
-
-### 7.3 子目录文件缺失
+### 7.2 子目录文件缺失
 
 某子目录存在但缺少应有文件 → 提示用户"该阶段半途中断，需补齐 {缺失文件清单} 后再继续"。不得因目录存在就跳过对应阶段。
 
-### 7.4 结束条件
+### 7.3 结束条件
 
 > 回归/多分类等非二分类场景由上游 `model-task-routing` 的 Q1 判定拦截（见 model-task-routing 7.1）；路由路径下 task-spec 第零步跳过，本 skill 不处理非二分类拒绝场景。
 

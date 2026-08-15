@@ -5,7 +5,7 @@
 
 6 个 sheet (与 SKILL.md §4.1 对齐):
   1. 模型概览       — task-spec/_manifest.json (需求规格 + 路由 + 样本概况 + 切分配置)
-  2. 样本分析       — data-profile/_manifest.json + _split_manifest.json (分时段 + 三档切分 + 稳定性)
+  2. 样本分析       — data-profile/_manifest.json + feature-analysis/analysis/_manifest.json (分时段 + 三档切分 + 稳定性)
   3. 特征质量       — feature-analysis/analysis/{_manifest.json, iv_table.csv, psi_table.csv, stats.csv}
   4. 三档评估       — new-models/*/evaluation/*_{split}_eval.json (多 run × 8 指标, 按 split 分块)
   5. 分桶排序性对比  — new-models/*/evaluation/*_{split}_eval.json performance.score_buckets['全量'] (多 run 并排)
@@ -494,14 +494,13 @@ def build_sheet1_overview(wb: Workbook, session_dir: Path) -> None:
     )
 
 
-# ===== Sheet 2: 样本分析 (from data-profile/_manifest.json + _split_manifest.json) =====
+# ===== Sheet 2: 样本分析 (from data-profile/_manifest.json + feature-analysis overview) =====
 
 def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     sheet_name = "2-样本分析"
     title = "2. 样本分析 (总体 + 分时段 + 三档切分 + 稳定性 + 充足性)"
 
     dp_manifest = _read_json(session_dir / "data-profile" / "_manifest.json")
-    split_manifest = _read_json(session_dir / "data-profile" / "_split_manifest.json")
 
     if not dp_manifest:
         _write_table_sheet(
@@ -515,11 +514,20 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     time_segments = dp_manifest.get("time_segments", []) or []
     stability = dp_manifest.get("stability", {}) or {}
     sufficiency = dp_manifest.get("sample_sufficiency", {}) or {}
-    split = dp_manifest.get("split", {}) or {}
-    ranges = split.get("ranges", {}) or {}
-    actual_ratios = split.get("actual_ratios", {}) or {}
-    splits = split.get("splits", {}) or {}
     null_counts = sample_summary.get("null_counts", {}) or {}
+
+    # 切分统计已后置到 feature-analysis, 从其 overview 读(切分单一真相)
+    fa_manifest = _read_json(
+        session_dir / "sample-features" / "feature-analysis" / "analysis" / "_manifest.json"
+    )
+    fa_overview = (fa_manifest or {}).get("overview", {}) or {}
+    sample_counts = fa_overview.get("sample_counts", {}) or {}
+    pos_rates = fa_overview.get("pos_rates", {}) or {}
+    pos_neg_ratio = fa_overview.get("positive_negative_ratio", {}) or {}
+    ranges = fa_overview.get("split_ranges", {}) or {}
+    split_strategy = fa_overview.get("split_strategy", "—")
+    dropped_rows = fa_overview.get("dropped_rows")
+    cross_diff_pp = fa_overview.get("cross_split_pos_rate_diff_pp")
 
     # 实际列名: 优先从 task-spec 存档的 id_cols / dt_col 解析; 兜底按默认列名(fuid/f_p_date)
     ts_manifest = _read_json(session_dir / "task-spec" / "_manifest.json") or {}
@@ -561,17 +569,19 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
             ("总样本 ≥ 50k?", sufficiency.get("total_meets_50k", "—")),
             ("总样本数", _to_int(sufficiency.get("total_count"))),
         ]),
-        ("▌ 切分元信息", [
-            ("切分方法", split.get("method", "—")),
+        ("▌ 切分元信息 (feature-analysis)", [
+            ("切分方法", split_strategy),
             ("train pday 范围", _to_str(ranges.get("train"))),
             ("test pday 范围", _to_str(ranges.get("test"))),
             ("oot pday 范围", _to_str(ranges.get("oot"))),
-            ("train 实际占比", _to_float(actual_ratios.get("train"))),
-            ("test 实际占比", _to_float(actual_ratios.get("test"))),
-            ("oot 实际占比", _to_float(actual_ratios.get("oot"))),
-            ("跨切分正样本率差异 (pp)", _to_float(split.get("cross_split_pos_rate_diff_pp"))),
-            ("dropped_rows", _to_int(split.get("dropped_rows"))),
-            ("切分说明", split.get("note", "—")),
+            ("train 样本量", _to_int(sample_counts.get("train"))),
+            ("test 样本量", _to_int(sample_counts.get("test"))),
+            ("oot 样本量", _to_int(sample_counts.get("oot"))),
+            ("train 正样本率", _to_float(pos_rates.get("train"))),
+            ("test 正样本率", _to_float(pos_rates.get("test"))),
+            ("oot 正样本率", _to_float(pos_rates.get("oot"))),
+            ("跨切分正样本率差异 (pp)", _to_float(cross_diff_pp)),
+            ("dropped_rows", _to_int(dropped_rows)),
             ("用户已确认", dp_manifest.get("user_confirmed", "—")),
         ]),
     ]
@@ -582,13 +592,13 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
         "最低正样本率": "0.00%",
         "波动幅度 (pp)": "0.00",
         "标准差 (pp)": "0.00",
-        "train 实际占比": "0.00%",
-        "test 实际占比": "0.00%",
-        "oot 实际占比": "0.00%",
+        "train 正样本率": "0.00%",
+        "test 正样本率": "0.00%",
+        "oot 正样本率": "0.00%",
         "跨切分正样本率差异 (pp)": "0.00",
     }
 
-    src = f"{session_dir}/data-profile/_manifest.json + {session_dir}/data-profile/_split_manifest.json"
+    src = f"{session_dir}/data-profile/_manifest.json + {session_dir}/sample-features/feature-analysis/analysis/_manifest.json"
 
     next_row = _write_kv_sheet(
         wb, sheet_name, title, sections,
@@ -662,7 +672,7 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
     cur_row += 1
 
     # 表头
-    split_headers = ["split", "样本量", "正样本数", "正样本率", "pday 范围"]
+    split_headers = ["split", "样本量", "正样本率", "正负比", "pday 范围"]
     for c, h in enumerate(split_headers, 1):
         cell = ws.cell(row=cur_row, column=c, value=h)
         cell.font = HF
@@ -671,16 +681,15 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
         cell.border = BD
     cur_row += 1
 
-    # 数据行
+    # 数据行(从 feature-analysis overview 读三档样本量/正样本率/正负比)
     data_start = cur_row
     for sp_name in ("train", "test", "oot"):
-        sp_data = splits.get(sp_name, {}) or {}
-        prange = sp_data.get("pday_range")
+        prange = ranges.get(sp_name)
         row_vals = [
             sp_name,
-            _to_int(sp_data.get("rows")),
-            _to_int(sp_data.get("positive")),
-            _to_float(sp_data.get("positive_rate")),
+            _to_int(sample_counts.get(sp_name)),
+            _to_float(pos_rates.get(sp_name)),
+            pos_neg_ratio.get(sp_name, "—"),
             _to_str(prange),
         ]
         for c, v in enumerate(row_vals, 1):
@@ -689,9 +698,9 @@ def build_sheet2_sample(wb: Workbook, session_dir: Path) -> None:
             cell.border = BD
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 cell.alignment = RIGHT
-                if c == 2 or c == 3:
+                if c == 2:
                     cell.number_format = "#,##0"
-                elif c == 4:
+                elif c == 3:
                     cell.number_format = "0.00%"
             else:
                 cell.alignment = LEFT

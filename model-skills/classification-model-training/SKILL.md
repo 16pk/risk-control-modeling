@@ -13,7 +13,7 @@ description: 端到端训练 xgboost/dnn/lr 二分类模型——读上游 featu
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
 | `splits/{train,test,oot}.parquet` | ✅ | 上游 `feature-analysis` 按 `model.split` 切分产出 | 本 skill 直接消费,不取数、不切分;缺失时回到 `classification-model-development` Stage 0 跑 `feature-analysis` 补齐,本 skill 不做切分兜底 |
-| 特征清单(`features` / `feature_list_source`) | ✅ | 用户配置 或 上游 `feature-matching` 派生的 `feature-list.csv` | 候选特征清单强制过**边界安全过滤**(可配 `model.boundary_filter.enable_*=false` 关闭),剔除 4 类会让训练失败或泄漏的特征(常量/泄漏/ID 类/全缺失,规则表见第 3 节);过滤后剩余特征即入模特征集;剔除弱特征(低 IV/高 PSI)的优化筛选不在本 skill,走 `classification-model-tuning` 产 `-feat` 新 run;`features` 留空则走 `feature_list_source`(各业务域清单见 `model-knowledge/assets/feature-knowledge/feature-knowledge.md` 索引,如 `feature-list/feature-list-user-operation-v1.csv`) |
+| 特征清单(`features` / `feature_list_source`) | ✅ | 用户配置 或 上游 `data-cleaning` 派生的 `feature-list.csv` | 候选特征清单强制过**边界安全过滤**(可配 `model.boundary_filter.enable_*=false` 关闭),剔除 4 类会让训练失败或泄漏的特征(常量/泄漏/ID 类/全缺失,规则表见第 3 节);过滤后剩余特征即入模特征集;剔除弱特征(低 IV/高 PSI)的优化筛选不在本 skill,走 `classification-model-tuning` 产 `-feat` 新 run;`features` 留空则走 `feature_list_source`(各业务域清单见 `model-knowledge/assets/feature-knowledge/feature-knowledge.md` 索引,如 `feature-list/feature-list-user-operation-v1.csv`) |
 | `train_config.yaml` | ✅ | 复制 `config/train_config.example.yaml` 后填写 | 填模型名/标签列/特征清单;可选 `model.baseline_eval_dir` 配基线评估目录以走 N-way 对比;可选 `model.run_label` 当作本次 run 的版本号(如 v1/v2)。**输入 yaml 必须放 `<session_dir>/new-models/{algo}-v{N}/config/` 下**(即 model 内部 config 目录),**严禁落到 session 根目录或 `<skill_dir>/config/` 下**;`run_build.py` 会把 `--config` 指向的 yaml 视为输入源,`write_train_config_yaml` 在同目录原地写 `_manifest.json`(含 `source_yaml` 指向自身),不做副本拷贝 |
 | `session_dir` | ✅ | 上游 `classification-model-development` / `classification-model-orchestration` 传入 | 本 skill 不负责 session 决议;无 session 上下文时请先调 `classification-model-development/scripts/list_sessions.py` 列历史 sessions |
 
@@ -65,7 +65,7 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 
 `--data_dir` 可选,默认从同 session 下 `<session_dir>/sample-features/` 读 `splits/{train,test,oot}.parquet`(由 `feature-analysis` 切分产出);若需用其他数据,显式传 `--data_dir` override(指向含 `splits/` 子目录的目录)。`--output_dir` 直接传 `<session_dir>`,`run_build` 会在其下落 `new-models/{algo}-v{N}/`(无 `classification-model-training/` 中间层)。test.parquet 当 val 段(early stopping);进程内用调优超参训练(`tune_train.TUNED_PARAMS`: depth 6 / lr 0.03 / n 800 + early-stop;比 `engines/_xgb/entry.py` 的强正则默认更高容量,避免欠拟合)。
 
-训练完成后,模型报告路径需人工登记到 `classification-model-recommend` 台账(本 skill 不自动改 csv)。
+训练完成后,模型报告路径需人工登记到 `model-knowledge` 台账(本 skill 不自动改 csv)。
 
 ### 2.5 训练前超参数确认（硬门禁，不可跳过）
 
@@ -180,7 +180,7 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 **规则**：
 1. **报告以 XLSX 为主**：对外呈现统一看 `evaluation/*_eval.xlsx`（含三档指标 + 十分桶 + 特征重要性多 sheet）；`*_eval.{json,md}` 保留为内部（机器对比/断点用），不进交付清单。
 2. **predictions/explainability 为缓存层**：评估依赖 predictions 作输入（内部必需），但交付清单不列；用户需要打分明细时显式要求再单独交付。
-3. **重复产物不交付**：data-profile 的三档 parquet（task-spec 阶段切分）与 `sample-features/splits/` 重复，后者为准，前者降级为缓存。
+3. **切分单一真相**：三档切分仅由 feature-analysis 产 `sample-features/splits/`（切分已从 task-spec 后置），data-profile 不再产三档 parquet。
 4. 单 run 产物结构见下方 4.0 之后各节，实际文件不减少（保证脚本链路稳定），**精简体现在交付清单与展示层**。
 
 单次 run 在 `<session_dir>/new-models/{algo}-v{N}/` 下落以下子目录(`--output_dir` 传的是 `<session_dir>` 本身,无 `classification-model-training/` 中间层):
@@ -247,7 +247,7 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 └── model-comparison_oot.{json,md,xlsx}     # 同上, oot 段
 ```
 
-聚合失败不影响主流程(单 run `comparison/` 已落盘), 仅打 warning。`included_runs` 字段记录实际纳入对比的 run 列表(扫 `new-models/*/evaluation/` + `model-recommend/*/evaluation/` 命中的 eval JSON)。
+聚合失败不影响主流程(单 run `comparison/` 已落盘), 仅打 warning。`included_runs` 字段记录实际纳入对比的 run 列表(扫 `new-models/*/evaluation/` 命中的 eval JSON)。
 
 ### 4.2 产物内容
 
@@ -260,8 +260,7 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 
 **对比阶段(可选,评估完成后链式调用)**:
 - `model.baseline_eval_dir` 配置时:评估完成后自动调 `classification-model-comparison` skill,对 train/test/oot 三档分别做 N-way 对比(新模型 eval JSON vs 基线 eval JSON)。
-- `model.baseline_eval_dir` 未设置时:默认扫描 `<session_dir>/model-recommend/*/evaluation/`(兼容 `classification-model-recommend` skill 推荐的 yx_001/yx_002 等多 model_id 子目录),命中即对每个 split 做 N-way 对比;无命中则跳过,不影响主流程。
-- `model.baseline_eval_dir: null` 显式为 null:关闭默认扫描,不产 `comparison/` 子目录。
+- `model.baseline_eval_dir` 未设置或为 null:跳过对比阶段,不产 `comparison/` 子目录,不影响主流程。
 - 基线 JSON 定位:在每个 baseline_eval_dir 下 glob `*_{split}_eval.json`(按 model_id 去重,避免同名重复计入);新模型 JSON:`{run_name}_{split}_eval.json`。
 - 产出:`comparison/comparison_{split}.{json,md,xlsx}` × 3 档 + `_manifest.json`。
 
@@ -294,8 +293,7 @@ version 决议规则见「3. 参数说明」末尾。
 | `classification-model-evaluation` | **评估依赖** | predictions 后调 `eval_single.py` 产标准化三件套(JSON+MD+XLSX),本 skill 不自带评估 |
 | `classification-model-comparison` | **对比依赖(可选)** | 配置 `model.baseline_eval_dir` 时调 `compare_models.py` 做 N-way 对比,产 `comparison/` |
 | `classification-model-tuning` | 下游 | 读本 skill run 输出,做规则诊断 / Optuna 搜索后落 `-tuned` 新 run |
-| `classification-model-recommend` | 下游 | 历史模型清单;训练完成后人工登记模型报告路径 |
-| `model-evo/shared`(父目录) | 公共代码 | 跨 skill 共享的配置读写(config_io / fetch_spark 等) |
+| `model-evo/shared`(父目录) | 公共代码 | 跨 skill 共享的配置读写(config_io / date_utils / gen_feature_list 等) |
 
 ## 6. 执行约束
 
@@ -318,5 +316,5 @@ python -m pytest <skill_dir>/tests/ -q -m "not slow"  # 仅快测
 
 ---
 
-数据来源:输入 `splits/{train,test,oot}.parquet` 由 `feature-analysis` skill 按 `model.split` 切分产出(其上游 sample.parquet 来自 `feature-matching`),本 skill 不取数也不切分;baseline eval JSON 来自 `classification-model-recommend` skill 的 `model-recommend/{model_id}/evaluation/` 目录;调优超参默认值见 `scripts/trainers/tune_train.py:TUNED_PARAMS`。
+数据来源:输入 `splits/{train,test,oot}.parquet` 由 `feature-analysis` skill 按 `model.split` 切分产出(其上游 sample.parquet 来自 `data-cleaning`),本 skill 不取数也不切分;baseline eval JSON 由 yaml `model.baseline_eval_dir` 显式指定;调优超参默认值见 `scripts/trainers/tune_train.py:TUNED_PARAMS`。
 最后更新:2026-08-04（v2：新增训练前超参数确认硬门禁 2.5 节 + 交付分层规范 4.0 节）

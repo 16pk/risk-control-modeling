@@ -14,9 +14,6 @@ import pandas as pd
 from config_io import (
     LOCAL_BYTES_LIMIT,
     BYTES_ROUTING_SCHEMA_VERSION,
-    JOIN_ID_COL_DEFAULT,
-    resolve_join_keys,
-    validate_model_join_keys,
     estimate_size_bytes,
     route_by_bytes,
     load_config,
@@ -43,12 +40,11 @@ def test_validate_ok():
     validate_common(_base_cfg())
 
 
-def test_validate_missing_features():
-    """features 为空必须报错(auto_select 关闭,引擎不会自挑列)。"""
+def test_validate_empty_features_allowed_local():
+    """local_file 语义: features 为空放行(视为用本地 parquet 全部列, 除 id/label/dt)。"""
     cfg = _base_cfg()
     cfg["model"]["features"] = []
-    with pytest.raises(ValueError, match="features"):
-        validate_common(cfg)
+    validate_common(cfg)
 
 
 def test_validate_missing_label():
@@ -299,61 +295,4 @@ def test_constants_present():
     assert BYTES_ROUTING_SCHEMA_VERSION >= 1
 
 
-# ---- 样本集 JOIN 红线 (ModelEvo-RED-0102): resolve_join_keys / validate_model_join_keys ----
 
-def _feat_model(**overrides):
-    """feature_table 模式的 model 段最小样板。"""
-    m = {
-        "sample_table": "db.sample",
-        "feature_table": "db.feat",
-        "dt_col": "f_p_date",
-        "id_cols": ["fuid"],
-    }
-    m.update(overrides)
-    return m
-
-
-def test_resolve_default_id_and_date_double_key():
-    """缺省补齐: [id_cols[0], dt_col] → fuid,f_p_date。"""
-    keys = resolve_join_keys(_feat_model())
-    assert keys == ["fuid", "f_p_date"]
-
-
-def test_resolve_explicit_join_keys_overrides():
-    """显式 join_keys(list / str)优先,不被覆盖。"""
-    assert resolve_join_keys(_feat_model(join_keys=["fuid", "f_p_date"])) == ["fuid", "f_p_date"]
-    assert resolve_join_keys(_feat_model(join_keys="fuid,f_p_date")) == ["fuid", "f_p_date"]
-
-
-def test_resolve_single_table_returns_none():
-    """单表模式无 feature_table → None(不产生跨表联接)。"""
-    assert resolve_join_keys({"id_cols": ["fuid"], "dt_col": "f_p_date"}) is None
-    assert resolve_join_keys({}) is None
-
-
-def test_validate_ok_with_date_in_keys():
-    """合法双键通过; pday 作为日期列时显式纳入即合规。"""
-    assert validate_model_join_keys(_feat_model()) == ["fuid", "f_p_date"]
-    assert validate_model_join_keys(
-        _feat_model(dt_col="pday", join_keys=["fuid", "pday"])
-    ) == ["fuid", "pday"]
-
-
-@pytest.mark.parametrize("model_kwargs", [
-    {"join_keys": ["fuid"]},                        # 只有 ID、无日期 → 违反红线
-    {"join_keys": ["f_p_date"]},                    # 只有日期、无 ID → 违反红线
-])
-def test_validate_rejects_non_compliant(model_kwargs):
-    """违反【ID + 日期】红线的 join_keys 一律硬拦截。"""
-    with pytest.raises(ValueError):
-        validate_model_join_keys(_feat_model(**model_kwargs))
-
-
-def test_empty_list_falls_back_to_valid_default():
-    """空列表视为未提供 → 默认补齐为 id+date(fuid,f_p_date), 属合法(不放行裸跑风险)。"""
-    assert validate_model_join_keys(_feat_model(join_keys=[])) == ["fuid", "f_p_date"]
-
-
-def test_join_id_col_default_alignment():
-    """JOIN_ID_COL_DEFAULT 应为用户粒度 ID fuid。"""
-    assert JOIN_ID_COL_DEFAULT == "fuid"

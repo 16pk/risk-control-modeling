@@ -2,7 +2,7 @@
 """features/ 子目录产出: 实际入模特征清单 + 报告。
 
 入参是经过清洗(object dtype 转 float / 来源去重)后的最终 features 列表,
-独立写盘以便下游(model-recommend / 特征贡献分析)直接消费。
+独立写盘以便下游(特征贡献分析)直接消费。
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _render_report(
 
     Args:
         features: 实际入模的最终特征列表
-        upstream_source: 上游来源文件(feature-matching 的 feature-list.csv 路径或用户指定)
+        upstream_source: 上游来源文件(data-cleaning 的 feature-list.csv 路径或用户指定)
         dropped: 清洗阶段被剔除的特征(空集为常态)
         run_name: 本次 run 目录名
         dropped_by_rule: 边界过滤按规则剔除的明细 {rule: [features]}(可为 None)
@@ -108,7 +108,7 @@ def write_features_stage(
     Args:
         layout: RunLayout 实例
         features: 实际入模特征(顺序与训练一致)
-        upstream_source: 上游来源描述(如 feature-matching 的 feature-list.csv 路径);可为 None
+        upstream_source: 上游来源描述(如 data-cleaning 的 feature-list.csv 路径);可为 None
         dropped: 训练前清洗阶段被剔除的特征(可为 None)
         dropped_by_rule: select_features 按规则剔除的明细 {rule: [features]}(可为 None);
             传入时 csv 增加 dropped 行, status=dropped_<rule>

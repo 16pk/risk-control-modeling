@@ -343,23 +343,16 @@ def run(
                 layout, model_cfg=model, used_params=used_params,
             )
 
-            # baseline_eval_dir 决议: yaml 显式配置 > 默认扫描 model-recommend/*/evaluation/
-            # 显式配 null 时关闭默认扫描; 留空(未设置 key)时走默认扫描
-            if "baseline_eval_dir" in model and model.get("baseline_eval_dir") is None:
-                print("[run_build] model.baseline_eval_dir 显式为 null, 跳过 comparison 阶段")
-                baseline_eval_dir = None
-            else:
-                baseline_eval_dir = model.get("baseline_eval_dir") or str(
-                    Path(output_dir) / "model-recommend" / "*" / "evaluation"
-                )
-
+            # baseline_eval_dir 决议: 仅读 yaml 显式配置(不再默认扫描历史模型推荐目录);
+            # 未配置或为空则跳过 comparison 阶段
+            baseline_eval_dir = model.get("baseline_eval_dir") or None
             if baseline_eval_dir:
                 from invoke.comparison import invoke_comparison_stage
                 invoke_comparison_stage(layout, baseline_eval_dir=baseline_eval_dir)
             else:
                 print("[run_build] 未配置 model.baseline_eval_dir, 跳过 comparison 阶段")
 
-            # 会话级横向对比聚合: 扫 new-models/ + model-recommend/ 下所有 eval JSON,
+            # 会话级横向对比聚合: 扫 new-models/ 下所有 eval JSON,
             # 在 model-comparison/ 下产 N-way 汇总三件套 (跨 run 对比, 与单 run 的 comparison/ 互补)
             from invoke.session_aggregate import invoke_session_aggregate
             invoke_session_aggregate(output_dir)

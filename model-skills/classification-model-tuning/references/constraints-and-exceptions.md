@@ -13,7 +13,6 @@
 
 - 不训练 baseline(`classification-model-training` 职责)
 - 不做特征质量分析 IV/PSI/相关性(`feature-analysis` 职责)
-- 不做历史模型推荐(`classification-model-recommend` 职责)
 - 不做会话级横向对比聚合(`classification-model-comparison` 职责)
 
 ## 2. 何时用

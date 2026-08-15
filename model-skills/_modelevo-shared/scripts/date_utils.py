@@ -6,8 +6,8 @@
   - 同时自动识别兼容旧 8 位 YYYYMMDD(向后兼容, Hive 分区/存量配置仍可能是 YYYYMMDD);
   - 内部比较(字符串/整数序)统一用归一化后的 8 位 YYYYMMDD, 保证 start<=p<=end 语义正确。
 
-本模块提供单一真相, 供 config_io / fetch_spark / task-spec / feature-matching /
-recommend / feature-analysis / training / tuning 等多处消费。
+本模块提供单一真相, 供 config_io / task-spec /
+feature-analysis / training / tuning 等多处消费。
 """
 from __future__ import annotations
 

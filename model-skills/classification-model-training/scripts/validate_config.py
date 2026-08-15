@@ -72,8 +72,8 @@ def _validate_features_non_empty(model: dict) -> None:
         "训练前必须有非空特征清单(validate_common 在 local_file 模式放行空 features, "
         "但训练实际跑不动)。请二选一:\n"
         "  1. 在 yaml model.features 显式列出特征名; 或\n"
-        "  2. 在 yaml model.feature_list_source 指向 feature-matching 产出的 feature-list.csv\n"
-        "     (通常位于 <session_dir>/sample-features/feature-matching/feature-list.csv)"
+        "  2. 在 yaml model.feature_list_source 指向 data-cleaning 产出的 feature-list.csv\n"
+        "     (通常位于 <session_dir>/sample-features/data-cleaning/feature-list.csv)"
     )
 
 

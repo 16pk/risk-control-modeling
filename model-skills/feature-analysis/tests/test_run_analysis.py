@@ -134,8 +134,12 @@ def test_run_analysis_smoke(tmp_path):
     ov = manifest["overview"]
     assert ov["split_strategy"] == "explicit"
     assert ov["sample_counts"]["train"] > 0
-    assert ov["sample_counts"]["val"] > 0
+    assert ov["sample_counts"]["test"] > 0
     assert ov["sample_counts"]["oot"] > 0
+    # 切分统计口径(后置自 task-spec)
+    assert ov["dropped_rows"] == 0
+    assert "cross_split_pos_rate_diff_pp" in ov
+    assert "positive_negative_ratio" in ov
 
 
 def _base_cfg_text():
@@ -289,17 +293,12 @@ def test_run_analysis_missing_split_errors(tmp_path):
         run_analysis(str(cfg_path), str(data_path), str(tmp_path / "out"))
 
 
-# ---------------- 哨兵值替换单元测试 ----------------
+# ---------------- 哨兵值校验(仅校验提醒, 替换已上移到 data-cleaning)单元测试 ----------------
 
 
-def _assert_nan_at(series, idx_set):
-    """断言指定位置为 NaN, 其余位置非 NaN。"""
-    assert series.isna().tolist() == [i in idx_set for i in range(len(series))]
-
-
-def test_replace_invalid_values_hits_and_replaces():
-    """命中哨兵值的特征应被替换为 NaN, 并返回替换统计。"""
-    from run_analysis import replace_invalid_values
+def test_check_invalid_values_reports_but_does_not_mutate():
+    """命中哨兵值的特征应被报告, 但**不改动数据**(替换已上移)。"""
+    from run_analysis import check_invalid_values
 
     df = pd.DataFrame({
         "fea_a": [-1, -2, 0, 5, -999, np.nan],
@@ -307,16 +306,13 @@ def test_replace_invalid_values_hits_and_replaces():
         "fea_c": [-9999, 1, 2, 3, 4, 5],
         "label": [0, 1, 0, 0, 1, 0],
     })
-    cleaned, report = replace_invalid_values(
+    original = df.copy()
+    report = check_invalid_values(
         df, ["fea_a", "fea_b", "fea_c"], [-1, -2, -9, -99, -999, -9999, -99999]
     )
 
-    # 替换后: fea_a 的 -1/-2/-999 变 NaN(原 NaN 保留), fea_c 的 -9999 变 NaN
-    _assert_nan_at(cleaned["fea_a"], {0, 1, 4, 5})
-    _assert_nan_at(cleaned["fea_c"], {0})
-    assert cleaned["fea_b"].tolist() == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-    # 标签列不受影响
-    assert cleaned["label"].tolist() == [0, 1, 0, 0, 1, 0]
+    # 不修改数据(与 data-cleaning 的 replace_invalid_values 区分)
+    assert df.equals(original)
 
     # 统计表: 只列命中特征
     assert set(report["feature"]) == {"fea_a", "fea_c"}
@@ -326,28 +322,27 @@ def test_replace_invalid_values_hits_and_replaces():
     assert row_a["hit_ratio"] == pytest.approx(0.5)
 
 
-def test_replace_invalid_values_empty_sentinels_skips():
-    """哨兵集合为空时不改动数据。"""
-    from run_analysis import replace_invalid_values
+def test_check_invalid_values_empty_sentinels_skips():
+    """哨兵集合为空时返回空报告。"""
+    from run_analysis import check_invalid_values
 
     df = pd.DataFrame({"fea": [-1, 0, 1, 2]})
-    cleaned, report = replace_invalid_values(df, ["fea"], [])
-    assert cleaned["fea"].tolist() == [-1.0, 0.0, 1.0, 2.0]
+    report = check_invalid_values(df, ["fea"], [])
     assert report.empty
 
 
-def test_replace_invalid_values_non_numeric_skipped():
+def test_check_invalid_values_non_numeric_skipped():
     """非数值特征列跳过(不报错)。"""
-    from run_analysis import replace_invalid_values
+    from run_analysis import check_invalid_values
 
     df = pd.DataFrame({
         "fea_num": [-1, 0, 1],
         "fea_str": ["a", "b", "c"],
     })
-    cleaned, report = replace_invalid_values(df, ["fea_num", "fea_str"], [-1])
-    _assert_nan_at(cleaned["fea_num"], {0})
-    assert cleaned["fea_str"].tolist() == ["a", "b", "c"]
+    report = check_invalid_values(df, ["fea_num", "fea_str"], [-1])
     assert report["feature"].tolist() == ["fea_num"]
+    # 不修改数据
+    assert df["fea_num"].tolist() == [-1, 0, 1]
 
 
 def test_split_drops_nan_label_rows():

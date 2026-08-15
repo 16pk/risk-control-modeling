@@ -19,8 +19,8 @@
     未提供期望值时该项 SKIP（并提示，防基线漂移被悄悄吞掉）。
 
   ③ FICO bscore 摘要行：
-        - `train`: n=… | bscore 范围=[a, b] | 均值=c
-    对照 fico/fitting-summary.json splits.{train,test,oot}。
+        - `full`: n=… | bscore 范围=[a, b] | 均值=c
+    对照 session 根 fico/fitting-summary.json 的 fit 段（全量样本）。
 
 用法:
     python render_check.py --session <dir> \\
@@ -338,20 +338,33 @@ RANGE_RE = re.compile(
     r"bscore\s+范围=\[(?P<a>-?\d+(?:\.\d+)?)\s*,\s*(?P<b>-?\d+(?:\.\d+)?)\]"
 )
 MEAN_RE = re.compile(r"均值=(?P<m>-?\d+(?:\.\d+)?)")
-SPLIT_PREFIX_RE = re.compile(r"^-\s*`?(?P<sp>train|test|oot)`?\s*[:：]")
+SPLIT_PREFIX_RE = re.compile(r"^-\s*`?(?P<sp>train|test|oot|full|all)`?\s*[:：]")
 
 
 def check_fico(lines: List[str], session: Path) -> None:
-    """校验形如 '- `train`: n=… | bscore 范围=[a,b] | 均值=c' 的行 vs fitting-summary。"""
-    sums: List[Dict[str, Any]] = []
-    for jp in sorted((session / "new-models").glob("*/fico/fitting-summary.json")):
-        d = read_json(jp)
-        if isinstance(d, dict) and isinstance(d.get("splits"), dict):
-            sums.append(d["splits"])
-    if not sums:
+    """校验形如 '- `full`: n=… | bscore 范围=[a,b] | 均值=c' 的行 vs fitting-summary。
+
+    新格式: session 根 fico/fitting-summary.json 的 fit 段(全量样本);
+    向后兼容旧格式: new-models/*/fico/fitting-summary.json 的 splits(train/test/oot)。
+    """
+    src: Dict[str, Any] = {}
+    # 1) 新格式优先: session 根 fico/fitting-summary.json → fit
+    fico_json = session / "fico" / "fitting-summary.json"
+    if fico_json.exists():
+        d = read_json(fico_json)
+        if isinstance(d, dict) and isinstance(d.get("fit"), dict):
+            src = {"full": d["fit"]}
+    # 2) 旧格式兜底: new-models/*/fico/fitting-summary.json → splits
+    if not src:
+        for jp in sorted((session / "new-models").glob("*/fico/fitting-summary.json")):
+            d = read_json(jp)
+            if isinstance(d, dict) and isinstance(d.get("splits"), dict):
+                src = d["splits"]
+                break
+    if not src:
         warns.append(("fico", "无 any fitting-summary.json(FICO 未产出),SKIP"))
         return
-    src_splits = sums[0]      # FICO 仅 top1 上线候选产生,取第一个即可
+    src_splits = src      # 新格式 {full: fit}; 旧格式 {train/test/oot: ...}
 
     checked_lines = set()
     matched = 0
