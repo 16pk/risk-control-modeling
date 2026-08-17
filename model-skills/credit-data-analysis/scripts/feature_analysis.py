@@ -13,7 +13,14 @@
       --output-dir <产物目录>
 
 支持 .feather / .csv / .parquet（按扩展名自动选读取方式）。
-产物：Excel + _manifest.json（参数溯源），落 --output-dir（默认当前目录）。
+产物：Excel + Markdown + _manifest.json（参数溯源），落 --output-dir（默认当前目录）。
+
+pipeline 模式（--split-config <feature_config.yaml>）：
+  - 本 skill 是建模 pipeline 内部的特征分析环节（development Stage 0）。
+  - 从 feature_config.yaml 的 model.split.oot_range 推导 PSI 基准月 = 第一个 OOT 月
+    （用户可 --base-month 覆盖）；该基准月须经用户确认后执行。
+  - 不做三档切分、不落盘 splits（切分后置到 training/tuning/evaluation 消费时即时进行）、
+    不产 IV/PSI 筛选 csv（训练过程不通过 IV/PSI 指标筛选特征）。
 """
 
 import argparse
@@ -26,6 +33,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import warnings
+import yaml
 
 warnings.filterwarnings("ignore")
 
@@ -58,7 +66,7 @@ def parse_args():
     ap.add_argument("--data-file", default=DEFAULTS["data_file"])
     ap.add_argument("--output-file", default=DEFAULTS["output_file"])
     ap.add_argument("--output-dir", default=DEFAULTS["output_dir"],
-                    help="产物（Excel + _manifest.json）输出目录，默认当前目录")
+                    help="产物（Excel + Markdown + _manifest.json）输出目录，默认当前目录")
     ap.add_argument("--time-col", default=DEFAULTS["time_col"])
     ap.add_argument("--feature-start", default=DEFAULTS["feature_start"],
                     help="特征列范围的起始列名")
@@ -66,8 +74,10 @@ def parse_args():
                     help="特征列范围的结束列名")
     ap.add_argument("--feature-extra", default=DEFAULTS["feature_extra"],
                     help="额外特征列名，逗号分隔")
-    ap.add_argument("--base-month", default=DEFAULTS["base_month"],
-                    help="PSI 基准月份，格式 YYYY-MM")
+    ap.add_argument("--base-month", default=None,
+                    help="PSI 基准月份，格式 YYYY-MM；pipeline 模式未指定时默认取第一个 OOT 月")
+    ap.add_argument("--split-config", default=None,
+                    help="pipeline 模式：feature_config.yaml 路径，用于推导 PSI 基准月（model.split.oot_range 首月）")
     ap.add_argument("--iv-label", default=DEFAULTS["iv_label"],
                     help="IV 计算所用的风险标签，留空则自动选择第一个可用的")
     ap.add_argument("--risk-prefixes", default=DEFAULTS["risk_prefixes"],
@@ -169,6 +179,48 @@ def load_and_prepare(args):
     print(f"  月份: {months}")
     print(f"  样本量: {len(df):,}")
     return df, months, feature_cols, risk_labels, iv_label, invalid_values
+
+
+# ============================================================
+# 1.5 PSI 基准月解析（pipeline 模式：默认取第一个 OOT 月）
+# ============================================================
+def _month_from_range_start(value: str) -> str:
+    """把 split 区间起始日期规范为 YYYY-MM。
+
+    兼容 8 位 YYYYMMDD 与 YYYY-MM-DD 两种写法（与 feature_config 校验口径一致）。
+    """
+    s = str(value).strip().replace("-", "").replace("/", "")
+    if len(s) < 6:
+        raise ValueError(f"split 区间起始日期无法解析为月份: {value!r}")
+    return f"{s[:4]}-{s[4:6]}"
+
+
+def resolve_base_month(args, months) -> str:
+    """确定 PSI 基准月。
+
+    优先级：显式 --base-month > pipeline 模式 split_config 的 oot_range 首月 > 默认值。
+    pipeline 模式推导出的基准月须经用户确认（LLM 在编排层向用户确认后传入 --base-month）。
+    """
+    if args.base_month:
+        return args.base_month
+    if args.split_config:
+        try:
+            cfg = yaml.safe_load(open(args.split_config, encoding="utf-8")) or {}
+            oot_range = (cfg.get("model") or {}).get("split", {}).get("oot_range")
+        except (OSError, IOError, yaml.YAMLError) as e:
+            raise ValueError(f"读取 --split-config 失败: {args.split_config!r}: {e}")
+        if not oot_range or len(oot_range) < 1:
+            raise ValueError(
+                "pipeline 模式推导 PSI 基准月失败: feature_config.yaml 缺少 model.split.oot_range"
+            )
+        base_month = _month_from_range_start(oot_range[0])
+        print(f"  → pipeline 模式: PSI 基准月 = 第一个 OOT 月 {base_month} "
+              f"(oot_range 起始 {oot_range[0]!r})，请用户确认")
+        if base_month not in months:
+            print(f"  ⚠ 注意: 基准月 {base_month} 不在数据月份范围内，PSI 各月均与无样本基准对比，结果仅供参考")
+        return base_month
+    print(f"  ⚠ 未指定 --base-month 且无 --split-config，使用默认基准月 {DEFAULTS['base_month']}")
+    return DEFAULTS["base_month"]
 
 
 # ============================================================
@@ -431,6 +483,105 @@ def write_excel(output_file, risk_labels, months,
 
 
 # ============================================================
+# 4.5 写入 Markdown 报告（与 Excel 同源，人工可读）
+# ============================================================
+def write_markdown(output_file, args, months, feature_cols, risk_labels,
+                   sample_total_df, sample_overdue_df, sample_rate_df,
+                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df):
+    print("[3.5/4] 写入 Markdown 报告...")
+    lines = []
+    lines.append("# 信贷特征分析报告")
+    lines.append("")
+    lines.append(f"> 数据文件: `{args.data_file}`")
+    lines.append(f"> 时间列: `{args.time_col}` ｜ PSI 基准月: `{args.base_month}` ｜ IV 标签: `{args.iv_label or '（自动）'}`")
+    if args.split_config:
+        lines.append(f"> pipeline 模式: `{args.split_config}`（PSI 基准月 = 第一个 OOT 月，须用户确认）")
+    lines.append(f"> 样本量: `{int(sample_total_df.values.sum() if sample_total_df.size else 0):,}` ｜ 月份: `{months[0]}` ~ `{months[-1]}`（{len(months)} 个月）")
+    lines.append("")
+
+    # --- 样本分布 ---
+    lines.append("## 一、样本分布")
+    lines.append("")
+    for title, df in [("样本数", sample_total_df), ("逾期数", sample_overdue_df), ("逾期率", sample_rate_df)]:
+        lines.append(f"### {title}")
+        lines.append("")
+        lines.append("| 月份 | " + " | ".join(df.columns) + " |")
+        lines.append("|---|" + "---|" * len(df.columns))
+        for idx, row in df.iterrows():
+            cells = " | ".join(f"{v:.4f}" if isinstance(v, float) else str(v) for v in row)
+            lines.append(f"| {idx} | {cells} |")
+        lines.append("")
+    if risk_labels:
+        latest = sample_rate_df.index[-1]
+        avg = sample_rate_df.loc[latest]
+        lines.append(f"> 最新月 `{latest}` 逾期率: " + "; ".join(
+            f"`{rl}={avg[rl]:.4f}`" for rl in risk_labels if rl in avg))
+        lines.append("")
+
+    # --- 特征分布 ---
+    lines.append("## 二、特征分布（全时段）")
+    lines.append("")
+    lines.append("| 特征 | 覆盖率 | 平均值 | 最小值 | 25% | 50% | 75% | 最大值 |")
+    lines.append("|---|------:|------:|------:|----:|----:|----:|------:|")
+    for fc, row in feat_dist_df.iterrows():
+        lines.append(
+            f"| {fc} | {row['覆盖率']:.2%} | {row['平均值']:.4g} | {row['最小值']:.4g} "
+            f"| {row['25%']:.4g} | {row['50%']:.4g} | {row['75%']:.4g} | {row['最大值']:.4g} |"
+        )
+    lines.append("")
+
+    # --- PSI 摘要（标红告警）---
+    lines.append(f"## 三、分月 PSI（基准月 `{args.base_month}`）")
+    lines.append("")
+    lines.append("| 特征 | " + " | ".join(months) + " |")
+    lines.append("|---|" + "---|" * len(months))
+    for fc in psi_df.index:
+        cells = " | ".join(
+            f"{v:.4f}" if isinstance(v, float) and not pd.isna(v) else "—" for v in psi_df.loc[fc]
+        )
+        lines.append(f"| {fc} | {cells} |")
+    lines.append("")
+    psi_warn = (psi_df > 0.10).any(axis=1)
+    warn_list = psi_warn[psi_warn].index.tolist()
+    if warn_list:
+        lines.append(f"> ⚠ **PSI 告警**（>0.10 的特征，共 {len(warn_list)} 个）: {', '.join(map(str, warn_list[:20]))}")
+    else:
+        lines.append("> ✓ 无 PSI>0.10 告警特征")
+    lines.append("")
+
+    # --- IV 摘要 ---
+    lines.append(f"## 四、分月 IV（标签 `{args.iv_label}`）")
+    lines.append("")
+    lines.append("| 特征 | " + " | ".join(months) + " |")
+    lines.append("|---|" + "---|" * len(months))
+    for fc in iv_df.index:
+        cells = " | ".join(
+            f"{v:.4f}" if isinstance(v, float) and not pd.isna(v) else "—" for v in iv_df.loc[fc]
+        )
+        lines.append(f"| {fc} | {cells} |")
+    lines.append("")
+
+    # --- 无效值检查 ---
+    lines.append("## 五、无效值检查")
+    lines.append("")
+    if invalid_df is not None and len(invalid_df):
+        lines.append("| 特征 | 命中无效值 | 命中样本数 | 命中占比 |")
+        lines.append("|---|------|------:|------:|")
+        for _, r in invalid_df.iterrows():
+            lines.append(f"| {r['特征']} | {r['命中无效值']} | {int(r['命中样本数'])} | {r['命中占比']:.2%} |")
+        lines.append("")
+        lines.append("> ⚠ 上述特征含哨兵值占位（无数据/拒贷/异常），建模前建议在 data-cleaning 阶段替换为 NaN。")
+    else:
+        lines.append("> ✓ 未发现无效值哨兵特征。")
+    lines.append("")
+
+    md_path = str(Path(output_file).with_suffix(".md"))
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print(f"  Markdown 报告: {md_path}")
+
+
+# ============================================================
 # 5. 落盘 manifest（参数溯源，供复现与追溯）
 # ============================================================
 def write_manifest(output_dir: Path, files: list, args) -> None:
@@ -444,6 +595,7 @@ def write_manifest(output_dir: Path, files: list, args) -> None:
             "feature_end": args.feature_end,
             "feature_extra": args.feature_extra,
             "base_month": args.base_month,
+            "split_config": args.split_config,
             "iv_label": args.iv_label,
             "time_col": args.time_col,
             "risk_prefixes": args.risk_prefixes,
@@ -465,6 +617,8 @@ def write_manifest(output_dir: Path, files: list, args) -> None:
 def main():
     args = parse_args()
     df, months, feature_cols, risk_labels, iv_label, invalid_values = load_and_prepare(args)
+    # PSI 基准月：pipeline 模式默认取第一个 OOT 月（须用户确认），显式 --base-month 覆盖
+    args.base_month = resolve_base_month(args, months)
     results = compute_all(df, months, feature_cols, risk_labels, iv_label, invalid_values, args)
     (sample_total_df, sample_overdue_df, sample_rate_df,
      feat_dist_df, monthly_results, psi_df, iv_df, invalid_df) = results
@@ -476,10 +630,14 @@ def main():
     write_excel(output_file, risk_labels, months,
                 sample_total_df, sample_overdue_df, sample_rate_df,
                 feat_dist_df, monthly_results, psi_df, iv_df, invalid_df)
-    write_manifest(out_dir, [args.output_file], args)
+    write_markdown(output_file, args, months, feature_cols, risk_labels,
+                   sample_total_df, sample_overdue_df, sample_rate_df,
+                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df)
+    write_manifest(out_dir, [args.output_file, Path(args.output_file).with_suffix(".md").name], args)
 
     print("[4/4] 完成!")
     print(f"  输出文件: {output_file}")
+    print(f"  Markdown 报告: {str(Path(output_file).with_suffix('.md'))}")
     print(f"  样本分布: {len(months)} 月 × {len(risk_labels)} 标签")
     print(f"  特征分布: {feat_dist_df.shape[0]} 特征 × {feat_dist_df.shape[1]} 统计量")
     for name in ["覆盖率", "均值", "最小值", "最大值", "标准差", "Nunique", "PSI", "IV"]:

@@ -1,13 +1,13 @@
 ---
 name: model-scoring
-description: 建模 pipeline 内部的定版模型打分环节，位于模型定版(Stage 4 收口)之后、score-to-fico(Stage 6)之前。用定版模型对 data-cleaning 清洗后的数据文件跑推理，输出违约概率分 score（不做校准、不转 FICO），透传所有非特征列减少存储成本。仅由 classification-model-development Stage 5 编排调起，不设独立触发词。
+description: 建模 pipeline 内部的定版模型打分环节，位于模型定版(收口)之后、score-to-fico 之前。用定版模型对 data-cleaning 清洗后的数据文件跑推理，输出违约概率分 score（不做校准、不转 FICO），透传所有非特征列减少存储成本。由 classification-model-development 收口后**默认执行**（用户可叫停），不设独立触发词。
 ---
 
 # model-scoring
 
-建模 pipeline 中「定版模型 → 打分」的**唯一推理环节**，位于 `classification-model-development` 的 **Stage 5**，承接 Stage 4 收口确认的定版模型（`finalized_model.json`），对清洗后数据跑推理产出违约概率分 `score`，供下游 `score-to-fico`（Stage 6）拟合校准转 FICO。
+建模 pipeline 中「定版模型 → 打分」的**唯一推理环节**，位于 `classification-model-development` 的 **Stage 6**（v2.1 起默认执行，不再"总是询问"），承接收口确认的定版模型（`finalized_model.json`），对清洗后数据跑推理产出违约概率分 `score`，供下游 `score-to-fico`（用户主动触发时）拟合校准转 FICO。
 
-> ⚠️ **触发定位**：本 skill 仅由 `classification-model-development` Stage 5 编排调起，**不设独立触发词**（与 `data-cleaning` / `feature-analysis` 一致）。
+> ⚠️ **触发定位**：v2.1 起收口后**默认执行**（用户可叫停），由 `classification-model-development` Stage 6 编排调起；不设独立触发词。
 
 ## 1. 职责边界
 
@@ -37,7 +37,7 @@ python <skill_dir>/scripts/score_data.py \
     [--algo xgb|dnn|lr]
 ```
 
-编排层（development Stage 5）先从 `finalized_model.json` 读 `run_name` / `algo` / `model_path`，再拼出上面对应参数；`--algo` 一般可省（脚本从 `model_meta.json` + 文件扩展名自动判定）。
+编排层（development Stage 6）先从 `finalized_model.json` 读 `run_name` / `algo` / `model_path`，再拼出上面对应参数；`--algo` 一般可省（脚本从 `model_meta.json` + 文件扩展名自动判定）。
 
 ## 4. 参数说明
 
@@ -58,11 +58,11 @@ python <skill_dir>/scripts/score_data.py \
 └── score_sample.parquet    # 透传所有非特征列(id/date/label 等) + score 列; 不含原特征列
 ```
 
-`score` 列即**违约概率分**，为下游 `score-to-fico`（Stage 6）的输入。
+`score` 列即**违约概率分**，为下游 `score-to-fico`（用户主动触发时）的输入。
 
 ## 6. 定版标记（finalized_model.json）
 
-Stage 4 收口确认上线候选后，由编排层调用本 skill 的定版标记工具落 session 根 `finalized_model.json`：
+收口确认上线候选后，由编排层调用本 skill 的定版标记工具落 session 根 `finalized_model.json`：
 
 ```bash
 python <skill_dir>/scripts/mark_finalized.py \
@@ -77,11 +77,11 @@ python <skill_dir>/scripts/mark_finalized.py \
 
 | skill / 模块 | 关系 | 说明 |
 |---|---|---|
-| `classification-model-development` | **编排调起（Stage 5）** | Stage 4 收口确认上线候选后调起，落 `finalized_model.json` + 打分 |
+| `classification-model-development` | **编排调起（Stage 6，默认执行）** | 收口确认上线候选后调起，落 `finalized_model.json` + 打分 |
 | `data-cleaning` | 上游 | 产 `sample-features/data-cleaning/sample.parquet`（本 skill 输入） |
 | `classification-model-training` | 上游 | 产 `new-models/{run}/model/`（定版模型 + `model_meta.json`） |
-| `score-to-fico` | 下游（Stage 6） | 消费本 skill 打分结果（含 label + score），拟合校准转 FICO |
-| `_modelevo-shared` | 依赖 | `record_stage.py` 记录本阶段快照（由 development 统一记录） |
+| `score-to-fico` | 下游（可选） | 用户主动触发时消费本 skill 打分结果（含 label + score），拟合校准转 FICO |
+| `_modelevo-shared` | 依赖 | 共享 metrics（打分评估用）；record_stage 链已删除 |
 
 ## 8. 执行约束
 

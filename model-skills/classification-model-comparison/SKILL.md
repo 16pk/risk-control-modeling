@@ -9,8 +9,8 @@ description: 多模型标准化评估横向对比——输入多个模型的标�
 
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
-| oot eval JSON（≥2 份） | ✅ | `classification-model-evaluation` 产出的 `*_oot_eval.json` | 同数据、同客群、同指标口径 |
-| all eval JSON（≥2 份） | ✅ | `classification-model-evaluation` 产出的 `*_all_eval.json`（`--input-dir` 模式自动产出）| 同数据、同客群、同指标口径 |
+| oot eval JSON（≥2 份） | ✅ | `classification-model-training` 内嵌 `eval_single.py` 产出的 `*_oot_eval.json` | 同数据、同客群、同指标口径 |
+| all eval JSON（≥2 份） | ✅ | `classification-model-training` 内嵌 `eval_single.py` 产出的 `*_all_eval.json`（`--input-dir` 模式自动产出）| 同数据、同客群、同指标口径 |
 
 **前置约束**：对比必须在相同数据集、相同客群、相同指标口径上进行；不对比在不同测试集上评估的模型。
 
@@ -42,14 +42,11 @@ python <skill_dir>/scripts/aggregate_session_comparison.py \
 
 脚本扫描 `new-models/*/evaluation/` 下的 eval JSON，对 oot 和 all 两档分别调 `compare_models.py` 对比，最终合成一份 combined 输出（中间产物落临时目录自动清理）。
 
-### 2.1 脚本快照记录(强制,手动跑时)
+### 2.1 降级为可选触发（v2.1）
 
-`aggregate_session_comparison.py` **手动执行**成功后,必须调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/comparison/`(集中清单 `<session_dir>/scripts/_manifest.json`);若由 `run_build.py` 末尾自动触发(development 编排场景),无需重复记录:
+本 skill **仅用户主动要求对比时才调度**（`classification-model-development` Stage 4 决策点 D）。若由 `run_build.py` 末尾自动触发（配 `model.baseline_eval_dir`），无需额外操作。
 
-```bash
-python <model-skills>/_modelevo-shared/scripts/record_stage.py \
-    --session-dir <session_dir> \
-    --stage comparison \
+> v2.1 已删除 record_stage 脚本快照链；断点续跑由 run 的 `_manifest.json` 承担。
     --script <skill_dir>/scripts/aggregate_session_comparison.py \
     --cmd "<上面实际执行的完整命令(含全部参数)>" \
     [--label "横向对比"]
@@ -120,14 +117,14 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 
 | 上下游 | Skill | 关系 |
 |---|---|---|
-| 上游 | `classification-model-evaluation` | 提供本 skill 的唯一合法输入 `*_eval.json`（含 `*_oot_eval.json` 和 `*_all_eval.json`），是本 skill 的强制前置 |
-| 编排方 | `classification-model-development` | 统一编排调用本 skill，本 skill **不**被 `classification-model-evaluation` 直接调用 |
+| 上游 | `classification-model-training` | 提供本 skill 的唯一合法输入 `*_eval.json`（内嵌 `eval_single.py` 产出 `*_oot_eval.json` 和 `*_all_eval.json`），是本 skill 的强制前置 |
+| 编排方 | `classification-model-development` | 统一编排调用本 skill（仅用户主动要求对比时） |
 
 ## 6. 执行约束
 
 | 约束 | 说明 |
 |---|---|
-| 前置强制 | 不跳过 `classification-model-evaluation` 直接对比原始打分文件 |
+| 前置强制 | 不跳过 `classification-model-training` 内嵌评估直接对比原始打分文件 |
 | 对比口径 | 不对比在不同测试集 / 不同客群 / 不同指标口径上评估的模型 |
 | 结论产出 | 不只凭 AUC 宣布胜者——必须结合分桶指标（label率/lift/召回率/累计召回）综合判断，DataBar 辅助观察单调性 |
 | 噪声阈值 | delta < 0.005 不认定为有意义差异（N < 5000 时是噪声） |

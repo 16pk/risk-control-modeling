@@ -82,6 +82,112 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _stats_from_df(df: pd.DataFrame, features: List[str]) -> pd.DataFrame:
+    """从 DataFrame 直接算 stats(缺失率), 供数据直算模式使用(v2.1 不再依赖 feature-analysis csv)。"""
+    rows = []
+    for f in features:
+        if f not in df.columns:
+            rows.append({"feature": f, "missing_rate": 1.0})
+            continue
+        rows.append({"feature": f, "missing_rate": float(df[f].isna().mean())})
+    return pd.DataFrame(rows)
+
+
+def _iv_from_df(df: pd.DataFrame, features: List[str], target: str) -> pd.DataFrame:
+    """从 DataFrame 直接算 IV, 供数据直算模式使用。"""
+    try:
+        from metrics import calc_iv
+    except ImportError:
+        return pd.DataFrame()
+    rows = []
+    for f in features:
+        if f not in df.columns or target not in df.columns:
+            continue
+        iv = calc_iv(df[f], df[target])
+        rows.append({"feature": f, "iv": iv if iv is not None else float("nan")})
+    return pd.DataFrame(rows)
+
+
+def _psi_from_dfs(train_df: pd.DataFrame, oot_df: pd.DataFrame, features: List[str]) -> pd.DataFrame:
+    """从 train/oot 两段 DataFrame 直接算 PSI, 供数据直算模式使用。"""
+    try:
+        from metrics import psi_from_series
+    except ImportError:
+        return pd.DataFrame()
+    rows = []
+    for f in features:
+        if f not in train_df.columns or f not in oot_df.columns:
+            continue
+        psi = psi_from_series(train_df[f], oot_df[f])
+        rows.append({"feature": f, "psi": psi if psi is not None else float("nan")})
+    return pd.DataFrame(rows)
+
+
+def select_from_df(
+    baseline_features: List[str],
+    train_df,
+    oot_df,
+    *,
+    target: str,
+    enable_psi: bool = True,
+    enable_iv: bool = True,
+    enable_missing: bool = True,
+    psi_threshold: float = DEFAULT_PSI_THRESHOLD,
+    iv_threshold: float = DEFAULT_IV_THRESHOLD,
+    missing_threshold: float = DEFAULT_MISSING_THRESHOLD,
+) -> SelectionResult:
+    """v2.1 数据直算版特征筛选: 从 train/oot 两段 DataFrame 直接计算 stats/IV/PSI。
+
+    不依赖 feature-analysis 落盘 csv。IV 需要标签, PSI 需要两段, 缺数据时对应规则跳过。
+
+    Args:
+        baseline_features: baseline run 用过的特征列表(保序)
+        train_df: 训练段 DataFrame(含 target)
+        oot_df: OOT 段 DataFrame(用于 PSI 对比)
+        target: 标签列名
+        enable_* / *_threshold: 同 select()
+    """
+    features = [f for f in baseline_features if f in train_df.columns]
+    stats_df = _stats_from_df(train_df, features)
+    iv_df = _iv_from_df(train_df, features, target)
+    psi_df = _psi_from_dfs(train_df, oot_df, features)
+
+    dropped_by_rule: Dict[str, List[str]] = {}
+    drop_union: Set[str] = set()
+
+    if enable_psi:
+        s = apply_high_psi_rule(features, psi_df, psi_threshold)
+        dropped_by_rule["high_psi"] = [f for f in features if f in s]
+        drop_union |= s
+    if enable_iv:
+        s = apply_low_iv_rule(features, iv_df, iv_threshold)
+        dropped_by_rule["low_iv"] = [f for f in features if f in s]
+        drop_union |= s
+    if enable_missing:
+        s = apply_high_missing_rule(features, stats_df, missing_threshold)
+        dropped_by_rule["high_missing"] = [f for f in features if f in s]
+        drop_union |= s
+
+    kept = [f for f in baseline_features if f not in drop_union]
+    dropped = [f for f in baseline_features if f in drop_union]
+
+    return SelectionResult(
+        kept_features=kept,
+        dropped_features=dropped,
+        dropped_by_rule=dropped_by_rule,
+        thresholds={
+            "psi": psi_threshold,
+            "iv": iv_threshold,
+            "missing": missing_threshold,
+        },
+        rules_enabled={
+            "high_psi": enable_psi,
+            "low_iv": enable_iv,
+            "high_missing": enable_missing,
+        },
+    )
+
+
 def select(
     baseline_features: List[str],
     analysis_dir: str,

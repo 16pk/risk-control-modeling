@@ -1,6 +1,6 @@
 ---
 name: credit-model-report
-description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。当用户要"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板""模板评估报告""帮我出评估报告 Excel"时使用。与 classification-model-evaluation 分工：evaluation 出标准化指标三件套（AUC/KS/分桶排序性，建模 pipeline 产物）；本 skill 出业务视角模板化评估报告（回溯表 + Lift/SWAP + 打分分布）。
+description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。v2.1 起**移出建模主流程**：仅用户主动要求业务评估报告时触发（"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板"）。标准化指标三件套（AUC/KS/分桶排序性）由 classification-model-training 内嵌的 eval_single.py 产出。
 compatibility: python3, pandas, openpyxl, numpy
 ---
 
@@ -8,15 +8,15 @@ compatibility: python3, pandas, openpyxl, numpy
 
 从模型打分 CSV 文件生成完整的 Excel 评估报告，包含回溯表、建模信息、KS、特征重要性、模型效果（Lift + SWAP）、打分分布（PSI + 分桶 + 分段逾期率）共 6 个 sheet。
 
-## 定位与分工（重要）
+## 定位与分工（v2.1 更新）
 
-| | credit-model-report（本 skill） | classification-model-evaluation |
+| | credit-model-report（本 skill） | classification-model-training 内嵌评估 |
 |---|---|---|
-| 触发场景 | 用户主动要求**业务评估报告**（回溯表 / Lift / SWAP / 打分分布 / 模板输出） | 建模 pipeline 内单模型标准化评估（AUC / KS / 分桶排序性） |
+| 触发场景 | **用户主动要求**业务评估报告（回溯表 / Lift / SWAP / 打分分布 / 模板输出），不进入 development 主流程 | 建模 pipeline 内单模型标准化评估（AUC / KS / 分桶排序性，eval_single.py 自动产出） |
 | 输出 | `{model_name}评估报告_YYYYMMDD.xlsx`（模板化，6-sheet） | JSON + MD + XLSX 三件套（标准化评估） |
 | 特色能力 | **新旧模型 SWAP 迁移分析**、分段逾期率、回溯表、模板复用 | 标准评估指标 + 客群拆分 |
 
-> **触发关键词**：评估报告 / 业务评估报告 / 回溯表 / Lift / SWAP / 打分分布 / 分段逾期率 / 模型报告模板 → 本 skill；仅要 AUC / KS 等标准化指标 → `classification-model-evaluation`。两个 skill 不互抢，用户诉求偏向"出报表给业务/领导看"时优先本 skill。
+> **触发关键词**：评估报告 / 业务评估报告 / 回溯表 / Lift / SWAP / 打分分布 / 分段逾期率 / 模型报告模板 → 本 skill（仅用户主动要求时）。仅要 AUC / KS 等标准化指标 → 训练产物 `evaluation/*_eval.xlsx` 已含。
 
 ## 执行流程
 

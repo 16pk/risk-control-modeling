@@ -23,12 +23,16 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from pandas.api import types as pd_types
-from sklearn.metrics import roc_auc_score
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 from datetime import datetime
+
+# v2.1: 指标计算统一复用共享库 _modelevo-shared/scripts/metrics.py
+import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts 到 sys.path
+from metrics import calc_auc as _shared_auc, calc_ks as _shared_ks
+from metrics import classification_metrics as _shared_cls, decile_buckets as _shared_buckets
 
 
 # 支持的输入文件扩展名（小写，含点）
@@ -81,67 +85,26 @@ def style_data_row(ws, row, ncols):
 
 
 # ============================================================
-# 指标计算
+# 指标计算（v2.1 统一复用共享库 metrics.py）
 # ============================================================
 def compute_auc(sub, score_col):
     if sub['label'].nunique() < 2:
         return None
-    return float(roc_auc_score(sub['label'], sub[score_col]))
+    return _shared_auc(sub[score_col], sub['label'])
 
 
 def compute_ks(sub, score_col):
-    s = sub.sort_values(score_col, ascending=False)
-    cp = (s['label'] == 1).cumsum() / max((s['label'] == 1).sum(), 1)
-    cn = (s['label'] == 0).cumsum() / max((s['label'] == 0).sum(), 1)
-    return float(abs(cp - cn).max())
+    return _shared_ks(sub[score_col], sub['label'])
 
 
 def compute_classification_metrics(sub, score_col):
     """准确率、精确率、召回率、F1（以0.5为阈值）"""
-    y_true = sub['label'].values
-    y_pred = (sub[score_col].values >= 0.5).astype(int)
-    tp = ((y_pred == 1) & (y_true == 1)).sum()
-    tn = ((y_pred == 0) & (y_true == 0)).sum()
-    fp = ((y_pred == 1) & (y_true == 0)).sum()
-    fn = ((y_pred == 0) & (y_true == 1)).sum()
-    total = len(y_true)
-    accuracy = (tp + tn) / total if total > 0 else None
-    precision = tp / (tp + fp) if (tp + fp) > 0 else None
-    recall = tp / (tp + fn) if (tp + fn) > 0 else None
-    f1 = 2 * precision * recall / (precision + recall) if (precision and recall and (precision + recall) > 0) else None
-    return {
-        'accuracy': round(float(accuracy), 6) if accuracy is not None else None,
-        'precision': round(float(precision), 6) if precision is not None else None,
-        'recall': round(float(recall), 6) if recall is not None else None,
-        'f1': round(float(f1), 6) if f1 is not None else None,
-    }
+    return _shared_cls(sub['label'], sub[score_col])
 
 
 def decile_buckets(sub, score_col, biz_cols, n_bins=10):
     """N等频降序分桶（默认10）。"""
-    s = sub.sort_values(score_col, ascending=False).copy()
-    s['decile'] = pd.cut(range(len(s)), bins=n_bins, labels=False) + 1
-    s['decile'] = n_bins + 1 - s['decile']  # n_bins=最高分
-    overall_lr = float(s['label'].mean())
-    total_pos = int(s['label'].sum())
-    cum_pos = 0
-    result = []
-    for d in range(n_bins, 0, -1):
-        b = s[s['decile'] == d]
-        bucket_pos = int(b['label'].sum())
-        cum_pos += bucket_pos
-        bucket_lr = float(b['label'].mean())
-        row = {'decile': d, 'count': len(b),
-               'score_min': round(float(b[score_col].min()), 4),
-               'score_max': round(float(b[score_col].max()), 4),
-               'label_rate': round(bucket_lr, 6),
-               'lift': round(bucket_lr / overall_lr, 4) if overall_lr > 0 else None,
-               'recall': round(bucket_pos / total_pos, 4) if total_pos > 0 else None,
-               'cum_recall': round(cum_pos / total_pos, 4) if total_pos > 0 else None}
-        for bc in biz_cols:
-            row[bc] = round(float(b[bc].mean()), 4) if bc in b.columns else None
-        result.append(row)
-    return result
+    return _shared_buckets(sub, score_col, biz_cols=list(biz_cols or []), n_bins=n_bins)
 
 
 def build_segment_metrics(df, score_col, biz_cols, segment_cols, n_bins=10):

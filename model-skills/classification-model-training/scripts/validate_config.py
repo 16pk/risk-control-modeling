@@ -14,9 +14,9 @@ from config_io import load_config, validate_common  # noqa: F401  re-export
 def validate_config(cfg: dict) -> None:
     """完整校验: 通用必填 + 训练专有(必填 version + 非空 features + boundary_filter 阈值)。
 
-    本 skill 不校验 model.split: 切分由 feature-analysis 完成, 本 skill
-    直接读其产出的 splits/{train,test,oot}.parquet。yaml 中 model.split
-    字段对 feature-analysis 仍必填, 但本 skill 不消费, 故不校验。
+    v2.1: model.split(若配置) 为切分唯一真相, 由本 skill 在训练消费时即时切分;
+    缺失时回退旧 session 的 splits/{train,test,oot}.parquet。切分字段非必填(兼容旧会话),
+    故此处不强制校验。
 
     Args:
         cfg: load_config 返回的字典

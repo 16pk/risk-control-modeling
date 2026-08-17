@@ -22,7 +22,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 SESSION = None  # 由 --session-dir 设置
-EVAL_SINGLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "classification-model-evaluation", "scripts", "eval_single.py")
+# v2.1: eval_single.py 已从 classification-model-evaluation 迁入本 skill scripts/
+EVAL_SINGLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "eval_single.py")
 
 LABEL = "dpd30_3c"
 DT = "fsx_time"

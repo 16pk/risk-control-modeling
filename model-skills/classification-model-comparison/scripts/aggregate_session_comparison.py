@@ -36,7 +36,8 @@ from openpyxl.styles import Font as _OpenpyxlFont, PatternFill, Alignment, Borde
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPARE = _REPO_ROOT / "classification-model-comparison" / "scripts" / "compare_models.py"
-_MERGE = _REPO_ROOT / "classification-model-evaluation" / "scripts" / "merge_eval_splits.py"
+# v2.1: merge_eval_splits.py 已从 classification-model-evaluation 迁入 classification-model-training/scripts/
+_MERGE = _REPO_ROOT / "classification-model-training" / "scripts" / "merge_eval_splits.py"
 
 _SPLITS = ("oot", "all")
 

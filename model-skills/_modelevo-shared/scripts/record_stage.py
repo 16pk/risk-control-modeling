@@ -67,8 +67,8 @@ def record_stage(session_dir: str, stage: str, script: str, cmd: str,
 
     Args:
         session_dir: 任务目录(如 runs/20260812-model_a)
-        stage: 阶段名(task-spec/data-cleaning/feature-analysis/training/
-               tuning/comparison/fico/fill_report 等, 仅小写字母/数字/连字符)
+        stage: 阶段名(task-spec/data-cleaning/training/
+               tuning/comparison/fico/fill_report 等, 仅小写字母/数字/连字符; v2.1 起不再被编排调用)
         script: 被执行的入口脚本路径(.py)
         cmd: 实际执行的完整命令行(含全部参数)
         label: 阶段说明(可选)
@@ -153,7 +153,7 @@ def main() -> int:
     parser.add_argument("--session-dir", required=True, help="任务目录(session_dir)")
     parser.add_argument(
         "--stage", required=True,
-        help="阶段名: task-spec/data-cleaning/feature-analysis/training/tuning/comparison/fico/fill_report 等",
+        help="阶段名: task-spec/data-cleaning/training/tuning/comparison/fico/fill_report 等",
     )
     parser.add_argument("--script", required=True, help="被执行的入口脚本绝对路径(.py)")
     parser.add_argument("--cmd", required=True, help="实际执行的完整命令行(含全部参数)")

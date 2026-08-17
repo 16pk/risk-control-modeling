@@ -8,8 +8,8 @@
 - evaluate_splits: 三档 split 一致口径评估
 - _ks_via_roc 模块级函数: 训练循环零开销调用, 不必实例化 MetricsReport
 
-边界: 完整评估能力 (lift / ROC 曲线 / 校准 / Brier / 月度 PSI / 趋势检验) 已委托
-classification-model-evaluation skill, 本模块仅保留训练阶段必需的 AUC/KS/Gini 三件套。
+边界: 完整评估能力 (lift / ROC 曲线 / 校准 / Brier / 月度 PSI / 趋势检验) 由
+scripts/eval_single.py(v2.1 内嵌本 skill)承担, 本模块仅保留训练阶段必需的 AUC/KS/Gini 三件套。
 """
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ class MetricsReport:
     - evaluate_splits 一次算三档
 
     边界: 本类只算训练阶段需要的 AUC/KS/Gini, 不堆 lift / ROC 曲线 / 校准 / Brier
-    等评估报告能力 — 那些归 classification-model-evaluation skill, 这里堆积会变成死代码。
+    等评估报告能力 — 那些由 scripts/eval_single.py(v2.1 内嵌)承担, 这里堆积会变成死代码。
     """
 
     def __init__(self, n_bins: int = 10, random_state: int = 42) -> None:

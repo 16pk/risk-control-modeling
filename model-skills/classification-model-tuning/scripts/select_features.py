@@ -168,7 +168,7 @@ def _print_selection_summary(snap, result) -> None:
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     """端到端特征筛选入口。"""
     from load_baseline import load as load_baseline
-    from selection_rules import select as run_select
+    from selection_rules import select_from_df as run_select
 
     from stages.layout import RunLayout, write_config_snapshot, write_train_config_yaml
     from stages.logs import tee_stdout, process_tee, finalize_logs_stage
@@ -191,9 +191,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     target_algo = snap.algo
 
     # 应用筛选规则 (规则筛选 + 可选 importance 截断, 取交集)
+    # v2.1: 改数据直算(读 baseline 的 train/oot parquet), 不再依赖 feature-analysis csv
+    import pandas as pd
+    model_cfg_bf = (snap.cfg.get("model") or {})
+    target_bf = model_cfg_bf.get("label_col", "label")
+    train_df = pd.read_parquet(snap.train_path)
+    oot_df = pd.read_parquet(snap.oot_path)
     result = run_select(
         baseline_features=list(snap.features),
-        analysis_dir=args.analysis_dir,
+        train_df=train_df,
+        oot_df=oot_df,
+        target=target_bf,
         enable_psi=not args.no_psi,
         enable_iv=not args.no_iv,
         enable_missing=not args.no_missing,
@@ -208,7 +216,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     if args.importance_gain_pct is not None:
         kept = _apply_importance_cut(baseline_run, kept, args.importance_gain_pct)
 
-    result.kept_features = sorted(kept)
+    # frozen dataclass 不可赋值, 用 dataclasses.replace 重建
+    import dataclasses
+    result = dataclasses.replace(result, kept_features=sorted(kept))
 
     _print_selection_summary(snap, result)
 
@@ -260,7 +270,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                 "baseline_run": snap.run_name,
                 "baseline_metrics": snap.metrics,
                 "selection": result.as_dict(),
-                "analysis_dir": str(Path(args.analysis_dir).resolve()),
+                "analysis_dir": str(Path(args.analysis_dir).resolve()) if args.analysis_dir else None,
                 "final_params": final_params,
             }
             runtime_extra.update(train_info or {})
@@ -282,7 +292,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
 
             write_features_stage(
                 layout, features=features,
-                upstream_source=f"baseline:{snap.run_name} | selection:{args.analysis_dir}",
+                upstream_source=f"baseline:{snap.run_name} | selection:(data-direct)",
                 dropped=list(result.dropped_features),
                 dropped_by_rule=result.dropped_by_rule,
                 produced_by=PRODUCED_BY,
@@ -340,12 +350,12 @@ def main() -> None:
     )
 
     parser = argparse.ArgumentParser(
-        description="model-tuning 特征筛选: 基于 feature-analysis csv 缩小特征集并重训"
+        description="model-tuning 特征筛选: 基于 baseline 数据直算 IV/PSI/缺失率缩小特征集并重训"
     )
     parser.add_argument("--baseline_run", required=True,
                         help="model-training 产出的 baseline run 目录")
-    parser.add_argument("--analysis_dir", required=True,
-                        help="feature-analysis 输出目录(含 stats.csv/iv_table.csv/psi_table.csv)")
+    parser.add_argument("--analysis_dir", default=None,
+                        help="(兼容保留, 已不使用) 原 feature-analysis 输出目录")
     parser.add_argument("--label", default=None,
                         help="新 run 的版本标识(别名, 形如 v1 / v2);留空则自动自增")
     parser.add_argument("--version", default=None,

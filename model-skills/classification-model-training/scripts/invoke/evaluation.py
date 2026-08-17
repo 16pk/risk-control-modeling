@@ -21,11 +21,10 @@ import pandas as pd
 
 from stages.layout import RunLayout, write_manifest
 
-# 定位 classification-model-evaluation/scripts/eval_single.py
+# 定位 eval_single.py（v2.1 已从 classification-model-evaluation 迁入本 skill scripts/）
 # 本文件路径: classification-model-training/scripts/invoke/evaluation.py
-# 仓库根 = parents[3]
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_EVAL_SINGLE = _REPO_ROOT / "classification-model-evaluation" / "scripts" / "eval_single.py"
+# eval_single.py 与 invoke/ 同属 scripts/ 下
+_EVAL_SINGLE = Path(__file__).resolve().parent.parent / "eval_single.py"
 
 # predictions parquet → eval_single CSV 的列保留
 _KEEP_COLS = ["score", "label"]
@@ -35,8 +34,8 @@ def _ensure_eval_single() -> Path:
     """确认 eval_single.py 存在, 否则报错。"""
     if not _EVAL_SINGLE.exists():
         raise FileNotFoundError(
-            f"[invoke_evaluation] 找不到 classification-model-evaluation 脚本: {_EVAL_SINGLE}\n"
-            "请确认 classification-model-evaluation skill 已部署到本仓库"
+            f"[invoke_evaluation] 找不到 eval_single.py: {_EVAL_SINGLE}\n"
+            "请确认 classification-model-training/scripts/eval_single.py 已部署"
         )
     return _EVAL_SINGLE
 

@@ -1,6 +1,6 @@
 # CODEBUDDY.md
 
-信贷风控建模专家包（ModelEvo 框架）：一个 Agent 定义 + 16 个建模 Skill 的专家包，端到端交付可上线的风控分类模型（XGBoost / LightGBM / LR 评分卡 / DNN）。
+信贷风控建模专家包（ModelEvo 框架）：一个 Agent 定义 + 精简后 11 个建模 Skill 的专家包，端到端交付可上线的风控分类模型（XGBoost / LightGBM / LR 评分卡 / DNN）。
 
 ## 怎么跑起来
 
@@ -18,13 +18,15 @@ Python 3.10+；建模依赖 xgboost / lightgbm / scikit-learn / optbinning / sha
 
 - `agents/risk-control-modeling.md` — 专家知识体（角色 / SOP / 关键决策确认门禁 / 红线）。
 - `model-skills/{name}/` — 每个 skill：`SKILL.md`（frontmatter `name` == 目录名）+ `scripts/` + `references/` + `tests/`。
-  - classification 专属 skill 加 `classification-` 前缀；跨流程共享 skill（`data-cleaning`、`feature-analysis`、`credit-data-analysis`、`model-knowledge`、`model-scoring`、`score-to-fico`、`model-task-routing`）不加前缀。
-- `model-skills/_modelevo-shared/scripts/` — 公共代码（`config_io.py` 配置读写 + 数据安全红线、`date_utils.py` 日期归一化、`gen_feature_list.py`、`record_stage.py`），各 skill 经 `_bootstrap.py` 注入。
+  - classification 专属 skill 加 `classification-` 前缀；跨流程共享 skill（`data-cleaning`、`credit-data-analysis`、`model-knowledge`、`model-scoring`、`score-to-fico`）不加前缀。
+  - v2.0 已删除：`model-task-routing` / `classification-model-orchestration` / `feature-analysis` / `classification-model-evaluation` / `classification-model-report`（职责分别并入 task-spec / development / credit-data-analysis / training）。
+- `model-skills/_modelevo-shared/scripts/` — 公共代码（`config_io.py` 配置读写 + 数据安全红线、`date_utils.py` 日期归一化、`gen_feature_list.py`、`metrics.py` 统一指标库（AUC/KS/Gini/PSI/IV/分桶）、`record_stage.py`（保留文件但不再被编排调用）），各 skill 经 `_bootstrap.py` 注入。
 - 契约：样本 `id + 特征列 + label`（可含日期列），落盘 `sample.parquet` + `feature-list.csv`；默认 id=`fuid`、日期=`f_p_date`、格式 `YYYY-MM-DD`。
-- 数据链路唯一 local_file：task-spec(local_file) → data-cleaning → feature-analysis → training。**全仓库已废除 spark 取数**。
-- 建模纪律红线：OOT 必须按时间且晚于训练窗；PSI 红线 0.10、IV 0.02/1.0、缺失率 0.95；禁止硬编码身份证 / 手机号明文。
+- 数据链路唯一 local_file：task-spec(local_file) → data-cleaning → credit-data-analysis → training。**全仓库已废除 spark 取数**。
+- **切分唯一真相** = `feature_config.yaml` / `train_config.yaml` 的 `model.split`；切分在训练消费时即时进行（写 run 内部 `data/splits/` 临时目录），不落 session 级 `splits/`。
+- 建模纪律红线：OOT 必须按时间且晚于训练窗；PSI 红线 0.10、IV 泄漏红线 1.0、缺失率 0.95；禁止硬编码身份证 / 手机号明文；训练过程不通过 IV/PSI 指标筛选特征（boundary_filter 只做常量/泄漏/ID/全缺失安全过滤）。
 
 ## 当前状态与下一步
 
-- v1.5.0（plugin.json），仅支持 classification；已支持定版模型打分（model-scoring）与 FICO 转换（score-to-fico）。
+- v2.0.0（plugin.json）：单编排器（development）+ 精简主链路（需求澄清 → 清洗 → 特征分析 → 训练内嵌评估 → 默认打分）；已支持定版模型打分（model-scoring，默认执行）与 FICO 转换（score-to-fico，可选）。
 - 规划中未实现：`model-publication`、`metric-matching`、`classification-model-evolution-plan`、`classification-segment-model`、特征衍生 / 样本调整 / loss 优化 / 网络结构优化。

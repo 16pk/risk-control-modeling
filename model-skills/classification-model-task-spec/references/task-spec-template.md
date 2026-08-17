@@ -1,6 +1,6 @@
-# task-spec.md 4 段式需求规格文档模板
+# task-spec.md 4 段式需求规格文档模板（v2.1 精简版）
 
-> 本文件从 `classification-model-task-spec/SKILL.md` 4.2 节抽出,包含 task-spec.md 的完整 4 段式模板（建模目标 / 核心参数 / 样本数据 / 待处理项）。SKILL.md 中保留 3 行摘要 + 指向本文件的指针。
+> 本文件从 `classification-model-task-spec/SKILL.md` 抽出，包含 task-spec.md 的完整 4 段式模板（建模目标 / 核心参数 / 样本数据 / 待处理项）。
 
 ```
 # 建模需求规格
@@ -10,47 +10,22 @@
 
 ## 一、建模目标
 
-{一句话说清楚：在 XX 人群上预测 XX 行为，用于 XX 触达，达到 XX 效果}
+{一句话说清楚：在 XX 人群上预测 XX 行为，好坏标签定义，用于 XX 决策}
 
 ## 二、核心参数
 
 | 维度 | 内容 | 状态 |
 |------|------|:---:|
-| 业务场景 | {增长/促活/获客/推荐} | |
-| 标签人群 | {圈选条件} | |
-| 预测目标 | {未来N天是否发生X行为} | |
+| 预测目标 | {未来N天是否发生X行为；好坏标签定义} | |
 | 目标变量 | `label`（样本文件固定列名） | |
 | 表现窗口 | {N天} | |
 | 预估正样本率 | ~{X}%（如有） | |
-| 效果目标 | {P0指标 + 基线（如有）} | |
-| 触达方式 | 离线T+1跑批打分（默认） | |
-| 约束条件 | {有/无，说明} | |
+| 数据文件 | {本地 parquet/csv/feather 路径} | |
+| ID / 标签 / 日期列 | `{fuid}` / `{label}` / `{f_p_date}` | |
 
-> 假设与默认值：{如用户分层标签="是"}（待确认）、{如沉默阈值=7天}（待数据探查）。
+## 三、样本数据与切分窗口
 
-## 三、样本数据
-
-**源表**: `{table_name}`
-
-| 列名 | 含义 | 类型 |
-|------|------|------|
-| fuid | 用户唯一标识 | string |
-| label | 正负样本标记（0/1） | int |
-| f_p_date | 样本观察日期（默认 YYYY-MM-DD，兼容 8 位 YYYYMMDD） | string |
-
-**数据文件**: `runs/{timestamp}-{model_name}/data-profile/{model_name}_sample_{YYYYMMDD}.parquet`
-
-### 样本分析结果
-
-| 指标 | 值 |
-|------|-----|
-| 总样本量 | |
-| 正样本率 | |
-| {f_p_date} 范围 | |
-| 标签稳定性 | 正样本率波动幅度 = Xpp ({稳定/轻微波动/显著波动}) |
-| 样本充足度 | {充足/基本可用/不足} |
-
-### Train/Test/OOT 三档区间（记录/透传，切分由 feature-analysis 完成）
+**样本文件**: `{local_sample_path}`
 
 | 集合 | 起 | 止 |
 |------|----|----|
@@ -58,8 +33,8 @@
 | Test | | |
 | OOT | | |
 
-> 切分方式：按日期时间顺序（切分与切分统计在 feature-analysis 完成）。
-> 详细报告见 `data-profile/report.md` 和 `data-profile/report.xlsx`
+> 切分方式：按时间顺序，OOT 严格晚于训练窗；train/test 开发集可随机切分（记录 seed，val 偏乐观以 OOT 为裁决）。
+> 切分在 training/tuning/evaluation 消费时即时进行，不落盘 splits。
 
 ## 四、待处理项
 
@@ -70,7 +45,7 @@
 
 ## 下一步
 
-- [ ] 用户确认样本分析结果
+- [ ] 用户确认需求规格
 - [ ] 用户确认是否建模 → classification-model-development
 ```
 

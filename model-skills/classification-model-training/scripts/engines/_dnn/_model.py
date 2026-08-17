@@ -2,7 +2,7 @@
 """DNN 模型定义与训练器。
 
 从 `engines/_dnn/entry.py` 提取, 供 `trainers/train_dnn.py` 复用。
-评估/报告逻辑已委托 `classification-model-evaluation`, 此处只保留训练核心。
+评估/报告逻辑已委托 `scripts/eval_single.py`(v2.1 内嵌本 skill), 此处只保留训练核心。
 """
 from __future__ import annotations
 

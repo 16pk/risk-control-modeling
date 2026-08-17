@@ -6,9 +6,11 @@
 各阶段产物(config/features/model/evaluation/predictions/explainability/logs)
 分别由对应 `write_*_stage` 模块负责。
 
-数据来源: <session_dir>/sample-features/splits/{train,test,oot}.parquet
-(由上游 feature-analysis skill 按 model.split 切分产出)。
-本编排器直接读三档 parquet, 不做内部切分; 切分逻辑收口在 feature-analysis。
+数据来源 (v2.1 切分后置):
+  - 新链路: <session_dir>/sample-features/data-cleaning/sample.parquet + train_config 的 model.split
+    由本编排器在训练消费时即时切分为 train/test/oot 三档(写 run 内部 data/splits/ 临时目录,
+    不作为 session 交付层产物)。
+  - 旧 session 兼容: <session_dir>/sample-features/splits/{train,test,oot}.parquet 直接读取。
 """
 from __future__ import annotations
 
@@ -16,6 +18,8 @@ import argparse
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+
+import pandas as pd
 
 
 def _resolve_version(cli_version: Optional[str], model_cfg: dict) -> Optional[str]:
@@ -60,24 +64,22 @@ def _dispatch_train(algo: str, common: dict):
 def _load_pre_split_data(
     splits_dir: Path, target: str, dt_col: str,
 ) -> Tuple[str, str, str, dict]:
-    """读 feature-analysis 产出的三档 parquet + _manifest.json 摘要 split_report。
+    """读旧版三档 parquet + _manifest.json 摘要 split_report（兼容旧 session）。
 
-    切分逻辑收口在 feature-analysis, 本 skill 直接读
-    <session_dir>/sample-features/splits/{train,test,oot}.parquet;
-    split_report 从 feature-analysis/analysis/_manifest.json 的 overview 字段提取
-    (含 split_strategy / sample_counts / pos_rates / oot_boundary / time_col_used),
-    落到 config.json.runtime.split_report 供 run_summary 渲染。
+    旧流程 feature-analysis 产出 <session_dir>/sample-features/splits/{train,test,oot}.parquet。
+    v2.1 起切分后置到本 skill 消费时即时切分（见 _load_and_split_from_sample），
+    但旧 session 产物仍可直接读取，本函数保留兼容。
 
     Args:
         splits_dir: <session_dir>/sample-features/splits 目录
-        target: 标签列名(仅用于兜底 pos_rate 计算, 主路径从 manifest 读)
-        dt_col: 时间列名(仅用于兜底, 主路径从 manifest 读)
+        target: 标签列名(仅用于兜底 pos_rate 计算)
+        dt_col: 时间列名(仅用于兜底)
 
     Returns:
         (train_path, test_path, oot_path, split_report_dict)
 
     Raises:
-        SystemExit: 三档 parquet 任一缺失, 或 feature-analysis _manifest.json 缺失
+        SystemExit: 三档 parquet 任一缺失
     """
     train_path = splits_dir / "train.parquet"
     test_path = splits_dir / "test.parquet"
@@ -86,15 +88,15 @@ def _load_pre_split_data(
     if missing:
         raise SystemExit(
             f"[run_build] 切分数据缺失: {missing}\n"
-            "本 skill 读 feature-analysis 产出的 splits/{train,test,oot}.parquet, "
-            "请先跑 classification-model-development Stage 0 (feature-analysis) 产出切分数据。"
+            "v2.1 起切分后置到训练消费时即时进行, 请确认上游 data-cleaning 已产出 sample.parquet "
+            "且 train_config.yaml 含 model.split 区间。"
         )
 
-    # split_report 从 feature-analysis _manifest.json 的 overview 提取
-    manifest_path = splits_dir.parent / "feature-analysis" / "analysis" / "_manifest.json"
     split_report: dict = {}
+    import json
+    # 尝试读取 feature-analysis 旧 manifest 提取 split_report（旧 session 兼容）
+    manifest_path = splits_dir.parent / "feature-analysis" / "analysis" / "_manifest.json"
     if manifest_path.exists():
-        import json
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             ov = manifest.get("overview") or {}
@@ -118,13 +120,119 @@ def _load_pre_split_data(
             }
         except (json.JSONDecodeError, KeyError) as e:
             print(f"[run_build] warn: 解析 feature-analysis manifest 失败: {e}, split_report 留空")
-    else:
-        print(f"[run_build] warn: feature-analysis manifest 不存在: {manifest_path}, split_report 留空")
 
     print(
-        f"[run_build] 读 feature-analysis 切分数据: train={split_report.get('counts', {}).get('train', '?')} "
+        f"[run_build] 读旧版切分数据: train={split_report.get('counts', {}).get('train', '?')} "
         f"test={split_report.get('counts', {}).get('val', '?')} "
         f"oot={split_report.get('counts', {}).get('oot', '?')} <- {splits_dir}"
+    )
+    return str(train_path), str(test_path), str(oot_path), split_report
+
+
+def _load_and_split_from_sample(
+    sample_path: Path,
+    split_cfg: dict,
+    target: str,
+    dt_col: str,
+    out_splits_dir: Path,
+) -> Tuple[str, str, str, dict]:
+    """v2.1 即时切分: 从 data-cleaning 产出的 sample.parquet 按 model.split 区间切三档。
+
+    切分发生在训练消费时(本 skill 内), 不依赖上游 feature-analysis 落盘 splits;
+    切分结果写临时 parquet 到 run 内部 out_splits_dir(<run_dir>/data/splits/),
+    供 trainer 按路径读取。切分唯一真相 = feature_config.yaml 的 model.split。
+
+    Args:
+        sample_path: data-cleaning 产出的 sample.parquet 全量样本
+        split_cfg: model.split 配置(train_range/test_range/oot_range + dt_col)
+        target: 标签列名
+        dt_col: 时间列名
+        out_splits_dir: run 内部临时 splits 目录
+
+    Returns:
+        (train_path, test_path, oot_path, split_report_dict)
+
+    Raises:
+        ValueError: split 区间缺失/不合法, 或 sample.parquet 不存在
+    """
+    if not sample_path.exists():
+        raise ValueError(
+            f"[run_build] sample.parquet 不存在: {sample_path}\n"
+            "请先完成 data-cleaning 产出 sample.parquet, 再训练。"
+        )
+    if not split_cfg:
+        raise ValueError(
+            "[run_build] model.split 缺失: 需要 train_range/test_range/oot_range 三档区间。"
+            "切分唯一真相 = feature_config.yaml 的 model.split。"
+        )
+
+    from date_utils import normalize_date
+
+    def _parse_range(key: str) -> tuple:
+        val = split_cfg.get(key)
+        if not val or len(val) != 2:
+            raise ValueError(f"[run_build] model.split.{key} 缺失或非 [起,止] 两元素: {val!r}")
+        return normalize_date(val[0]), normalize_date(val[1])
+
+    train_start, train_end = _parse_range("train_range")
+    test_start, test_end = _parse_range("test_range")
+    oot_start, oot_end = _parse_range("oot_range")
+
+    print(f"[run_build] 即时切分: train [{train_start}, {train_end}] "
+          f"test [{test_start}, {test_end}] oot [{oot_start}, {oot_end}] <- {sample_path}")
+    df = pd.read_parquet(sample_path)
+    if dt_col not in df.columns:
+        raise ValueError(
+            f"[run_build] 时间列 '{dt_col}' 不在 sample.parquet 中, "
+            f"可用列: {list(df.columns)[:20]}"
+        )
+    # 时间列归一化为 8 位 YYYYMMDD(兼容 YYYY-MM-DD 与 YYYYMMDD)后按区间过滤
+    norm = df[dt_col].astype(str).str.replace("-", "", regex=False)
+    df["_dt_norm"] = norm
+
+    def _in_range(s: str, e: str) -> pd.DataFrame:
+        sub = df[(df["_dt_norm"] >= s) & (df["_dt_norm"] <= e)].copy()
+        # 剔除 label 缺失/非法样本(训练/评估均不参与)
+        if target in sub.columns:
+            sub = sub[sub[target].isin([0, 1])].reset_index(drop=True)
+        return sub
+
+    train_df = _in_range(train_start, train_end)
+    test_df = _in_range(test_start, test_end)
+    oot_df = _in_range(oot_start, oot_end)
+    df.drop(columns=["_dt_norm"], inplace=True)
+
+    if len(train_df) == 0 or len(test_df) == 0 or len(oot_df) == 0:
+        raise ValueError(
+            f"[run_build] 切分后存在空档: "
+            f"train={len(train_df)} test={len(test_df)} oot={len(oot_df)}。"
+            "请检查 model.split 区间是否与数据时间范围匹配。"
+        )
+
+    out_splits_dir.mkdir(parents=True, exist_ok=True)
+    train_path = out_splits_dir / "train.parquet"
+    test_path = out_splits_dir / "test.parquet"
+    oot_path = out_splits_dir / "oot.parquet"
+    train_df.to_parquet(train_path, index=False)
+    test_df.to_parquet(test_path, index=False)
+    oot_df.to_parquet(oot_path, index=False)
+
+    pos_rates = {
+        "train": float(train_df[target].mean()) if target in train_df.columns else None,
+        "val": float(test_df[target].mean()) if target in test_df.columns else None,
+        "oot": float(oot_df[target].mean()) if target in oot_df.columns else None,
+    }
+    split_report = {
+        "strategy": "explicit",
+        "oot_boundary": f"{dt_col} >= {oot_start}",
+        "counts": {"train": len(train_df), "val": len(test_df), "oot": len(oot_df)},
+        "pos_rates": pos_rates,
+        "time_col_used": dt_col,
+        "warnings": tuple(),
+    }
+    print(
+        f"[run_build] 即时切分完成: train={len(train_df)} test={len(test_df)} "
+        f"oot={len(oot_df)} -> {out_splits_dir}"
     )
     return str(train_path), str(test_path), str(oot_path), split_report
 
@@ -167,73 +275,48 @@ def run(
     if model.get("label_expr"):
         target = "label"
 
-    # 数据决议: 上游 feature-analysis 产出的 splits/{train,test,oot}.parquet
+    # 数据决议 (v2.1 切分后置): 优先从 data-cleaning/sample.parquet + model.split 即时切分;
+    # 兼容旧 session 直接读 sample-features/splits/{train,test,oot}.parquet。
     splits_dir = Path(data_dir) / "splits"
-    train_path, test_path, oot_path, split_report_dict = _load_pre_split_data(
-        splits_dir=splits_dir,
-        target=target,
-        dt_col=model.get("dt_col", "f_p_date"),
-    )
-    split_mode = "pre-split"
-
-    # ---- 计算资源路由裁决 (compute routing, 字节口径 EXP-G-004): distributed ⇒ 禁止本机训练 ----
-    # 权威源 = task-spec Gate P0 存档的 _manifest.json.engine.ruling(取数落盘前裁定);
-    # 兼容旧会话退化读取 feature-analysis 写入的 sample-features/_routing.json。
-    # 已彻底移除对 splits 三档 parquet 的元素数(R×C)兜底估算——判据统一为字节,
-    # 且不再在训练侧自研第二套探测(双份真相反向风险)。
-    session_root = Path(data_dir).resolve().parent
-    gate_ruling = None
-    gate_manifest = session_root / "task-spec" / "_manifest.json"
-    if gate_manifest.exists():
-        try:
-            import json as _json_g
-            _gate_data = _json_g.loads(gate_manifest.read_text(encoding="utf-8"))
-            _engine = _gate_data.get("engine") or {}
-            _ruling = str(_engine.get("ruling") or "").lower()
-            if _ruling in ("local", "distributed"):
-                gate_ruling = _ruling
-                print(f"[run_build] [gate-p0] 沿用 task-spec 裁决 engine.ruling={gate_ruling}")
-        except Exception as _g_exc:
-            print(f"[run_build] warn: 解析 task-spec manifest 引擎裁决失败: {_g_exc}")
-
-    legacy_route = "local"
-    routing_json = Path(data_dir) / "_routing.json"
-    if routing_json.exists():
-        try:
-            import json as _json_r
-            legacy_route = str((_json_r.loads(routing_json.read_text(encoding="utf-8")) or {}).get("route") or "local").lower()
-        except Exception as _exc:
-            print(f"[run_build] warn: 解析 {routing_json} 失败: {_exc}")
-    effective_route = gate_ruling if gate_ruling is not None else legacy_route
-    distributed_signal = effective_route == "distributed"
-
-    def _warn_distributed_recommended(_reason: str):
-        """把『建议走分布式』写成醒目的、agent 可 grep 的半自动引导语。"""
-        print(
-            "\n" + "=" * 79 +
-            f"\n[compute-routing][DISTRIBUTED_REQUIRED] 窗口体量≥1GB,已停止本机单进程训练({_reason})。\n"
-            "  本模型应改用 **ray-distributed-train**(LightGBM CPU 多集群 / XGBoost GPU head),\n"
-            "  并跳过 Stage0 本地特征分析报告(分布式平台特征分析留待未来开发)。\n"
-            "  操作方式二选一:\n"
-            "    ① 人工发起: /ray-distributed-train\n"
-            "    ② 建模总控 development 会读到这行提示,半自动引导你走分布式流程。\n"
-            "  ⚠️ 未经「门禁#4 算法与超参数」「门禁#6 交付方式」确认不可直接提交远端 job。\n" +
-            "=" * 80 + "\n"
+    sample_path = Path(data_dir) / "data-cleaning" / "sample.parquet"
+    split_cfg = model.get("split") or {}
+    dt_col = model.get("dt_col", "f_p_date")
+    if sample_path.exists() and split_cfg:
+        # 即时切分: 结果写 run 内部临时目录(由 run_dir 决议后补建)
+        split_mode = "instant-split"
+        _split_ctx = {"sample_path": sample_path, "split_cfg": split_cfg,
+                      "target": target, "dt_col": dt_col}
+    elif (splits_dir / "train.parquet").exists():
+        train_path, test_path, oot_path, split_report_dict = _load_pre_split_data(
+            splits_dir=splits_dir,
+            target=target,
+            dt_col=dt_col,
         )
-
-    if distributed_signal:
-        _warn_distributed_recommended(
-            "task-spec Gate P0 已裁定 engine.ruling=distributed"
-            if gate_ruling == "distributed"
-            else "feature-analysis 已标 route=distributed(legacy)"
-        )
+        split_mode = "pre-split"
+    else:
         raise SystemExit(
-            "[compute-routing] run_build 中止于本地训练前(大样本须转 ray-distributed-train); "
-            "本轮未生成任何 new-models 产物。"
+            f"[run_build] 数据源缺失:\n"
+            f"  - 新链路(v2.1): {sample_path} + model.split {split_cfg or '(缺失)'}\n"
+            "  - 旧链路: " + str(splits_dir / "train.parquet") + "\n"
+            "请确认已完成 data-cleaning(产 sample.parquet)并配置 model.split, "
+            "或旧 session 已有 splits/ 三档。"
         )
+
+    # v2.1 精简: 全仓库已废除 spark 取数与分布式裁决(task-spec Gate P0 / feature-analysis 已删),
+    # 计算路由恒为 local, 不做分布式信号探测。
 
     layout = RunLayout.create(output_dir=output_dir, algo=algo, suffix="", version=version)
     print(f"[run_build] run_dir = {layout.run_dir}")
+
+    # v2.1 即时切分: 把 split_ctx 落实为三档 parquet(写 run 内部 data/splits/, 非 session 交付层)
+    if split_mode == "instant-split":
+        train_path, test_path, oot_path, split_report_dict = _load_and_split_from_sample(
+            sample_path=_split_ctx["sample_path"],
+            split_cfg=_split_ctx["split_cfg"],
+            target=_split_ctx["target"],
+            dt_col=_split_ctx["dt_col"],
+            out_splits_dir=layout.run_dir / "data" / "splits",
+        )
 
     # 进程级日志: 从 run_dir 创建到完成回执的全部 stdout/stderr 落 logs/run_build.log
     # (tee_stdout 只覆盖训练核心阶段, process_tee 额外捕获 run_dir print / import 警告 / 完成回执等)
@@ -241,32 +324,49 @@ def run(
     with process_tee(process_log):
         with tee_stdout(layout):
             # 边界特征过滤: 剔除常量/泄漏/ID-like/全缺失 4 类会让训练失败或泄漏的特征
-            # 上游 feature-analysis 缺 stats.csv/feature-quality.csv 时跳过对应规则, 不阻断训练
-            from boundary_filter import filter_boundary_features
-            analysis_manifest_path = Path(data_dir) / "feature-analysis" / "analysis" / "_manifest.json"
-            sample_total = 0
-            if analysis_manifest_path.exists():
-                import json as _json
-                try:
-                    _ov = (_json.loads(analysis_manifest_path.read_text(encoding="utf-8")).get("overview") or {})
-                    sample_total = int(_ov.get("n_total") or 0)
-                except (ValueError, KeyError) as _e:
-                    print(f"[run_build] warn: 解析 feature-analysis manifest n_total 失败: {_e}")
+            # v2.1: instant-split 走数据直算(从 train 段直接算 stats/IV, 不依赖 feature-analysis csv);
+            #       pre-split 兼容旧 session 读 feature-analysis 落的 csv(缺失则跳过规则)。
             bf_cfg = model.get("boundary_filter") or {}
             n_before_filter = len(features)
-            bf_result = filter_boundary_features(
-                features,
-                analysis_dir=str(Path(data_dir) / "feature-analysis" / "analysis"),
-                sample_total=sample_total,
-                enable_constant=bf_cfg.get("enable_constant", True),
-                enable_leakage=bf_cfg.get("enable_leakage", True),
-                enable_id_like=bf_cfg.get("enable_id_like", True),
-                enable_all_missing=bf_cfg.get("enable_all_missing", True),
-                iv_max=bf_cfg.get("iv_max", 1.0),
-                const_unique_max=bf_cfg.get("const_unique_max", 1),
-                id_like_ratio=bf_cfg.get("id_like_ratio", 0.9),
-                missing_max=bf_cfg.get("missing_max", 1.0),
-            )
+            if split_mode == "instant-split":
+                from boundary_filter import filter_boundary_features_from_df
+                bf_result = filter_boundary_features_from_df(
+                    features,
+                    pd.read_parquet(train_path),
+                    target=target,
+                    enable_constant=bf_cfg.get("enable_constant", True),
+                    enable_leakage=bf_cfg.get("enable_leakage", True),
+                    enable_id_like=bf_cfg.get("enable_id_like", True),
+                    enable_all_missing=bf_cfg.get("enable_all_missing", True),
+                    iv_max=bf_cfg.get("iv_max", 1.0),
+                    const_unique_max=bf_cfg.get("const_unique_max", 1),
+                    id_like_ratio=bf_cfg.get("id_like_ratio", 0.9),
+                    missing_max=bf_cfg.get("missing_max", 1.0),
+                )
+            else:
+                from boundary_filter import filter_boundary_features
+                analysis_manifest_path = Path(data_dir) / "feature-analysis" / "analysis" / "_manifest.json"
+                sample_total = 0
+                if analysis_manifest_path.exists():
+                    import json as _json
+                    try:
+                        _ov = (_json.loads(analysis_manifest_path.read_text(encoding="utf-8")).get("overview") or {})
+                        sample_total = int(_ov.get("n_total") or 0)
+                    except (ValueError, KeyError) as _e:
+                        print(f"[run_build] warn: 解析 feature-analysis manifest n_total 失败: {_e}")
+                bf_result = filter_boundary_features(
+                    features,
+                    analysis_dir=str(Path(data_dir) / "feature-analysis" / "analysis"),
+                    sample_total=sample_total,
+                    enable_constant=bf_cfg.get("enable_constant", True),
+                    enable_leakage=bf_cfg.get("enable_leakage", True),
+                    enable_id_like=bf_cfg.get("enable_id_like", True),
+                    enable_all_missing=bf_cfg.get("enable_all_missing", True),
+                    iv_max=bf_cfg.get("iv_max", 1.0),
+                    const_unique_max=bf_cfg.get("const_unique_max", 1),
+                    id_like_ratio=bf_cfg.get("id_like_ratio", 0.9),
+                    missing_max=bf_cfg.get("missing_max", 1.0),
+                )
             print(
                 f"[run_build] 边界过滤: {len(bf_result.dropped_features)} 个特征被剔除, "
                 f"保留 {len(bf_result.kept_features)}/{n_before_filter}"
@@ -375,23 +475,26 @@ def run(
 
 
 def _resolve_data_dir(cli_data_dir: Optional[str], output_dir: str) -> str:
-    """决定训练数据目录(需含 splits/{train,test,oot}.parquet)。
+    """决定训练数据目录(需含 data-cleaning/sample.parquet 或 splits/{train,test,oot}.parquet)。
 
-    优先级: CLI --data_dir > 同 session 下 feature-analysis 切分产物父目录 > 报错。
+    v2.1 优先级: CLI --data_dir > 同 session 下 sample-features/ > 报错。
+    sample-features/ 下数据源二选一:
+      - 新链路: data-cleaning/sample.parquet (+ train_config 的 model.split 即时切分)
+      - 旧链路: splits/{train,test,oot}.parquet (旧 session 兼容)
     """
     if cli_data_dir:
         return cli_data_dir
 
     inferred = str(Path(output_dir) / "sample-features")
-    if (Path(inferred) / "splits" / "train.parquet").exists():
+    if (Path(inferred) / "data-cleaning" / "sample.parquet").exists() or \
+       (Path(inferred) / "splits" / "train.parquet").exists():
         print(f"[run_build] 未传 --data_dir, 自动推断 = {inferred}")
         return inferred
 
     raise SystemExit(
-        f"[run_build] 未传 --data_dir 且默认路径不存在: {inferred}/splits/train.parquet\n"
-        "本 skill 读 feature-analysis 产出的 splits/{train,test,oot}.parquet, "
-        "请先跑 classification-model-development Stage 0 (feature-analysis) 产出切分数据, "
-        "或显式传 --data_dir 指向含 splits/ 子目录的目录。"
+        f"[run_build] 未传 --data_dir 且默认路径不存在: {inferred}/data-cleaning/sample.parquet\n"
+        "请先跑 data-cleaning 产出 sample.parquet 并配置 model.split, "
+        "或显式传 --data_dir 指向含数据子目录的目录。"
     )
 
 
@@ -402,7 +505,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="model-training 编排")
     parser.add_argument("--config", required=True)
     parser.add_argument("--data_dir", default=None,
-                        help="含 splits/{train,test,oot}.parquet 的目录(通常 <session_dir>/sample-features/); "
+                        help="数据目录(通常 <session_dir>/sample-features/); 需含 data-cleaning/sample.parquet "
+                             "(v2.1 即时切分)或 splits/{train,test,oot}.parquet(旧 session 兼容); "
                              "留空则从 <output_dir>/sample-features/ 推断")
     parser.add_argument("--output_dir", required=True,
                         help="session_dir (本编排器在其下落 new-models/)")

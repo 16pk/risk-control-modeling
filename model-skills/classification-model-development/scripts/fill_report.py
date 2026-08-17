@@ -4,10 +4,10 @@
 按 classification-model-development/SKILL.md §6 契约,从 session_dir 下各 sub-skill
 产出的 manifest/JSON/CSV 中提取信息,幂等更新 report.md 的三~六段。
 
-段落归属:
-- 三(特征宽表) — 由 `classification-model-orchestration` Step 4B 触发回填
-- 四(特征分析) — 由 `classification-model-development` Stage 0 触发回填
-- 五(模型迭代) / 六(横向对比) — 由 `classification-model-development` 触发回填
+段落归属(v2.1 收敛为 4 节, 全部由 `classification-model-development` 触发回填):
+- 二(样本与特征) — Stage 2 credit-data-analysis 完成后
+- 三(模型迭代) — 每个 run 完成后
+- 四(结论与交付) — Stage 5/6 收口后
 
 幂等: 同一段落多次调用结果一致 — 用 `## 三、` 等 H2 锚点切分,替换段落内容,
 保留首部 (一~二段) 与其他段落不变。
@@ -76,6 +76,24 @@ def _fmt_auc(x: Any) -> str:
         return f"{float(x):.4f}"
     except (TypeError, ValueError):
         return "—"
+
+
+def _latest_run_splits_dir(session_dir: Path) -> Optional[Path]:
+    """v2.1: 找最新 run 内部的即时切分产物目录 new-models/*/data/splits/。
+
+    返回按目录名倒序(时间戳/版本)第一个含 train.parquet 的 data/splits; 无则 None。
+    """
+    new_models = session_dir / "new-models"
+    if not new_models.is_dir():
+        return None
+    candidates = []
+    for run_dir in sorted(new_models.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        splits_dir = run_dir / "data" / "splits"
+        if (splits_dir / "train.parquet").exists():
+            candidates.append(splits_dir)
+    return candidates[0] if candidates else None
 
 
 def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
@@ -149,24 +167,32 @@ def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
 # ===== Section IV: 特征宽表 =====
 
 def build_section_iv(session_dir: Path) -> str:
-    """特征宽表段 — 来源: feature-list.csv + 三档切分(切分唯一真相 = feature-analysis Stage 0 产 splits)。
+    """特征宽表段 — 来源: feature-list.csv + 三档切分。
 
-    manifest 来源: 仅 sample-features/splits/ (feature-analysis Stage 0 产, 含三档 parquet)。
-    切分已从 task-spec 后置, data-profile 不再产 _split_manifest.json。
+    v2.1 切分后置到 training 消费时即时切分(写 new-models/*/data/splits/),
+    优先从最新 run 的 data/splits/ 重建; 兼容旧 session 的 sample-features/splits/。
     """
     dc_dir = session_dir / "sample-features" / "data-cleaning"
     manifest = None
     source_tag = "—"
 
-    splits_dir = session_dir / "sample-features" / "splits"
-    if splits_dir.exists() and (splits_dir / "train.parquet").exists():
-        manifest = _build_split_manifest_from_parquets(splits_dir)
-        source_tag = "feature-analysis(splits)"
+    # v2.1 新链路: 最新 run 内部的即时切分产物 data/splits/{train,test,oot}.parquet
+    new_splits_dir = _latest_run_splits_dir(session_dir)
+    if new_splits_dir is not None:
+        manifest = _build_split_manifest_from_parquets(new_splits_dir)
+        source_tag = "training 即时切分(run 内部 data/splits)"
+
+    # 旧 session 兼容: sample-features/splits/
+    if not manifest:
+        splits_dir = session_dir / "sample-features" / "splits"
+        if splits_dir.exists() and (splits_dir / "train.parquet").exists():
+            manifest = _build_split_manifest_from_parquets(splits_dir)
+            source_tag = "feature-analysis(splits, 旧 session)"
 
     if not manifest:
         return (
             f"{SECTION_ANCHORS['IV'][0]}\n\n"
-            "（特征宽表/切分尚未执行: sample-features/splits/ 缺失）\n"
+            "（特征宽表/切分尚未执行: 无 run 内部 data/splits/ 或 sample-features/splits/）\n"
         )
 
     splits = manifest.get("splits", {})
@@ -223,84 +249,86 @@ def build_section_iv(session_dir: Path) -> str:
 # ===== Section V: 特征分析 =====
 
 def build_section_v(session_dir: Path) -> str:
-    """特征分析段 — 来源: feature-analysis/analysis/ 下 report.md + csv。"""
-    fa_dir = session_dir / "sample-features" / "feature-analysis" / "analysis"
-    manifest = _read_json(fa_dir / "_manifest.json")
+    """特征分析段 — 来源: credit-data-analysis 产物(sample-features/credit-data-analysis/) + 新模型 run 内部 IV 表。
 
-    if not manifest:
+    v2.1: 原 feature-analysis 已并入 credit-data-analysis(pipeline 特征分析),
+    产物为 特征分析结果.md / 特征分析结果.xlsx / _manifest.json(分月视角);
+    若不存在则回退读取最新 run 的 explainability/feature-importance.csv 兜底展示。
+    """
+    cda_dir = session_dir / "sample-features" / "credit-data-analysis"
+    manifest = _read_json(cda_dir / "_manifest.json")
+
+    # 主路径: credit-data-analysis 已执行 → 引用其 md 报告 + 最新 run 特征重要性
+    if manifest:
+        md_report = cda_dir / "特征分析结果.md"
+        params = manifest.get("params", {})
+        lines = [
+            f"{SECTION_ANCHORS['V'][0]}\n",
+            f"- 特征分析(credit-data-analysis)已执行, 报告见 `sample-features/credit-data-analysis/特征分析结果.md`",
+            f"- 数据文件: `{params.get('data_file', '—')}`",
+            f"- PSI 基准月: `{params.get('base_month', '—')}`"
+            f"{' ｜ split_config: `' + str(params.get('split_config')) + '`' if params.get('split_config') else ''}",
+            "",
+        ]
+        fi_path = _latest_run_feature_importance(session_dir)
+        lines.append("### 最新 run 特征重要性 (Top 20)")
+        lines.append("")
+        lines.extend(_feature_importance_lines(fi_path))
+        lines.append(f"> 分月 PSI/IV/无效值明细见 `sample-features/credit-data-analysis/特征分析结果.md`")
+        lines.append("")
+        return "\n".join(lines)
+
+    # 兜底: credit-data-analysis 未执行, 从最新 run 读取特征重要性
+    fi_path = _latest_run_feature_importance(session_dir)
+    if fi_path is None:
         return (
             f"{SECTION_ANCHORS['V'][0]}\n\n"
-            "（feature-analysis 尚未执行, analysis/_manifest.json 缺失）\n"
+            "（特征分析尚未执行: credit-data-analysis 产物缺失）\n"
         )
+    return _build_section_v_fallback(fi_path)
 
-    overview = manifest.get("overview", {})
-    iv_rows = _read_csv(fa_dir / "iv_table.csv")
-    psi_rows = _read_csv(fa_dir / "psi_table.csv")
-    stats_rows = _read_csv(fa_dir / "stats.csv")
 
-    iv_top10 = sorted(
-        [r for r in iv_rows if r.get("iv") and r["iv"] != "nan"],
-        key=lambda r: float(r["iv"]),
-        reverse=True,
-    )[:10]
-
-    psi_warn = [r for r in psi_rows if r.get("warn", "").lower() == "true"]
-
+def _feature_importance_lines(fi_path: Optional[Path]) -> list:
+    """从 feature-importance.csv 生成 Top 20 展示行; 无文件返回说明行。"""
+    if fi_path is None:
+        return ["（无可用特征重要性数据）"]
     try:
-        high_missing = [
-            r for r in stats_rows
-            if r.get("missing_rate") and float(r["missing_rate"]) > 0.95
-        ]
-    except (TypeError, ValueError):
-        high_missing = []
+        import pandas as pd
+        fi = pd.read_csv(fi_path)
+    except Exception:
+        return ["（特征重要性文件读取失败）"]
+    if "feature" not in fi.columns:
+        return ["（特征重要性文件缺 feature 列）"]
+    gain_col = next((c for c in ("gain", "total_gain", "importance") if c in fi.columns), None)
+    lines = ["| # | feature | importance |", "|---|---------|-----------|"]
+    for i, row in fi.head(20).iterrows():
+        imp = row.get(gain_col, "—") if gain_col else "—"
+        lines.append(f"| {i + 1} | {row.get('feature', '—')} | {imp} |")
+    return lines
 
+
+def _latest_run_feature_importance(session_dir: Path) -> Optional[Path]:
+    """v2.1 兜底: 找最新 run 的 explainability/feature-importance.csv。"""
+    new_models = session_dir / "new-models"
+    if not new_models.is_dir():
+        return None
+    for run_dir in sorted(new_models.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        p = run_dir / "explainability" / "feature-importance.csv"
+        if p.exists():
+            return p
+    return None
+
+
+def _build_section_v_fallback(fi_path: Path) -> str:
+    """v2.1 兜底: credit-data-analysis 未执行时, 用最新 run 的特征重要性简要展示。"""
     lines = [
         f"{SECTION_ANCHORS['V'][0]}\n",
-        f"- 总样本: {_fmt_num(overview.get('n_total'))} "
-        f"(train={_fmt_num(overview.get('n_train'))} / "
-        f"oot={_fmt_num(overview.get('n_oot'))})",
-        f"- 分析特征数: {overview.get('n_features', '—')}",
-        f"- PSI 预警数 (> {overview.get('psi_warn_threshold', 0.1)}): "
-        f"{overview.get('n_psi_warn', '—')}",
+        "- 特征分析(credit-data-analysis)尚未执行, 以下为最新 run 的特征重要性兜底展示:",
         "",
-        "### IV Top 10",
-        "",
-        "| # | feature | IV | 单变量 AUC | 有效分箱 |",
-        "|---|---------|----|-----------|---------|",
     ]
-    for i, r in enumerate(iv_top10, 1):
-        lines.append(
-            f"| {i} | {r.get('feature', '—')} | "
-            f"{float(r.get('iv', 0)):.4f} | "
-            f"{_fmt_auc(r.get('auc'))} | "
-            f"{r.get('n_bins_effective', '—')} |"
-        )
-
-    lines.extend(["", "### PSI 预警 (train → oot 不稳定)", ""])
-    if psi_warn:
-        lines.extend([
-            "| feature | PSI |",
-            "|---------|-----|",
-        ])
-        for r in sorted(psi_warn, key=lambda x: float(x.get("psi", 0)), reverse=True):
-            lines.append(f"| {r.get('feature', '—')} | {float(r.get('psi', 0)):.4f} |")
-    else:
-        lines.append("（无 PSI 预警特征）")
-
-    lines.extend(["", "### 高缺失率 (> 0.95)", ""])
-    if high_missing:
-        lines.extend(["| feature | 缺失率 | dtype |", "|---------|--------|-------|"])
-        for r in high_missing:
-            lines.append(
-                f"| {r.get('feature', '—')} | "
-                f"{_fmt_pct(r.get('missing_rate'))} | "
-                f"{r.get('dtype', '—')} |"
-            )
-    else:
-        lines.append("（无缺失率 > 0.95 的特征）")
-
-    lines.append("")
-    lines.append(f"> 详细报告见 `sample-features/feature-analysis/analysis/report.md`")
+    lines.extend(_feature_importance_lines(fi_path))
     lines.append("")
     return "\n".join(lines)
 

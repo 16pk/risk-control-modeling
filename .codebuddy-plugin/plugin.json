@@ -1,22 +1,17 @@
 {
   "name": "risk-control-modeling",
-  "version": "1.5.0",
-  "description": "Interactive end-to-end credit risk modeling expert: data exploration, feature engineering (IV/PSI/WOE), tree-model development & tuning (XGBoost/LightGBM), evaluation (AUC/KS/PSI), and scorecards on demand — with key decisions confirmed by the user, a lightweight orchestration mode for rapid default runs (skip stages explicitly, keeping manifest/record_stage traceability), extensible via MCP connectors & skills.",
+  "version": "2.0.0",
+  "description": "Interactive end-to-end credit risk modeling expert: requirement clarification, data cleaning, credit feature analysis (monthly PSI/IV), tree-model development & evaluation (XGBoost/LightGBM/DNN/LR, AUC/KS/PSI), default model scoring, and on-demand FICO/business reports — with a single orchestrator, split deferred to training-time, unified shared metrics, and key decisions confirmed by the user.",
   "agents": ["./agents/risk-control-modeling.md"],
   "skills": [
-    "./model-skills/model-task-routing",
     "./model-skills/model-knowledge",
     "./model-skills/data-cleaning",
-    "./model-skills/feature-analysis",
     "./model-skills/credit-data-analysis",
-    "./model-skills/classification-model-orchestration",
     "./model-skills/classification-model-task-spec",
     "./model-skills/classification-model-development",
     "./model-skills/classification-model-training",
     "./model-skills/classification-model-tuning",
-    "./model-skills/classification-model-evaluation",
     "./model-skills/classification-model-comparison",
-    "./model-skills/classification-model-report",
     "./model-skills/credit-model-report",
     "./model-skills/score-to-fico",
     "./model-skills/model-scoring"
@@ -34,8 +29,8 @@
     "zh": "信贷风控建模专家"
   },
   "displayDescription": {
-    "en": "End-to-end credit risk modeling: data exploration, feature selection, tree-model development & tuning, and evaluation — interactive confirmation at key steps, with a lightweight orchestration mode for rapid default runs (skip stages explicitly, keep manifest/record_stage traceability), deployment-ready models.",
-    "zh": "专注信贷风控建模全流程：数据探索、特征筛选、树模型开发调优与评估，关键环节交互确认，支持精简编排模式（默认方案快速出模型，显式跳过阶段且保留可追溯记录），产出可上线模型。"
+    "en": "End-to-end credit risk modeling: requirement clarification, data cleaning, feature analysis, tree-model development & evaluation, and default model scoring — a single orchestrator with split deferred to training-time, unified shared metrics, and interactive confirmation at key steps. Deployment-ready models.",
+    "zh": "专注信贷风控建模全流程：需求澄清、数据清洗、特征分析、模型训练调优与评估、定版默认打分。单一调度者编排、切分后置到训练消费时、指标计算统一共享，关键环节交互确认，产出可上线模型。"
   },
   "avatar": "avatars/expert.png",
   "categoryId": "08-FinanceInvestment",
@@ -50,8 +45,8 @@
     { "en": "Model Development & Evaluation", "zh": "模型开发与评估" }
   ],
   "quickPrompts": [
-    { "en": "Build a credit risk model from this dataset — confirm data, target and key decisions before executing", "zh": "帮我基于这份信贷数据构建风控模型，数据、目标与关键方案请先确认再执行" },
-    { "en": "Run data exploration and feature selection, and confirm the filtering plan before modeling", "zh": "先做数据探索和特征筛选，把筛选方案给我确认后再建模" },
+    { "en": "Build a credit risk model from this dataset — confirm target and train/test/OOT window before executing", "zh": "帮我基于这份信贷数据构建风控模型，目标与切分窗口先确认再执行" },
+    { "en": "Run data cleaning and feature analysis, then train a baseline model", "zh": "先做数据清洗和特征分析，再训练 baseline 模型" },
     { "en": "Train and tune a tree model — confirm hyperparameters and the train/test/OOT window split first", "zh": "训练并调优一个树模型，超参数和训练窗口划分先给我确认" }
   ]
 }

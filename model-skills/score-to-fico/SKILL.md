@@ -1,18 +1,18 @@
 ---
 name: score-to-fico
-description: 风控概率分 → FICO 标准分转换。对定版模型打分结果（含违约概率 score + 标签列）做 LR 校准 + 标准分映射，产出 FICO 量纲标准分（范围约 [400,780]，分高险低）。仅可在分类建模 pipeline 内调用（classification-model-development Stage 6，可选），消费 model-scoring（Stage 5）的打分结果，默认用全量样本 + Y 标签拟合校准参数。当用户在建模收口后确认"转 FICO 分"时由编排层调起。
+description: 风控概率分 → FICO 标准分转换。对定版模型打分结果（含违约概率 score + 标签列）做 LR 校准 + 标准分映射，产出 FICO 量纲标准分（范围约 [400,780]，分高险低）。v2.1 起降级为**仅用户主动触发**（收口后不再默认询问），消费 model-scoring 的打分结果，默认用全量样本 + Y 标签拟合校准参数。当用户明确要求"转 FICO 分 / 要 FICO 分"时由编排层调起。
 ---
 
 # 概率分 → FICO 标准分转换（score-to-fico）
 
 > 本 skill 只做 **校准 + 转分** 一步，消费上游 `model-scoring` 的打分结果，产出 FICO 量纲标准分。
-> 前置：`model-scoring`（Stage 5）已用定版模型产出违约概率分 `score`。
+> 前置：`model-scoring` 已用定版模型产出违约概率分 `score`。
 
 ## 1. 触发定位与职责边界
 
 | 项 | 说明 |
 |---|---|
-| 触发 | **仅可在分类建模 pipeline 内调用**，由 `classification-model-development` **Stage 6**（可选）编排调起，收口后总是询问用户是否转换 |
+| 触发 | **仅用户主动触发**（明确说"转 FICO 分"），由 `classification-model-development` 编排调起；v2.1 起收口后**不再默认询问**（FICO 是业务展示层格式，非训练二分类模型的核心目标） |
 | 输入 | `model-scoring` 打分结果（`<session_dir>/scoring/score_sample.parquet`，含 `score` 概率列 + 透传的 `label` 列） |
 | 输出 | FICO 标准分产物，落 `<session_dir>/fico/` |
 | 不做 | 不再提供独立 `--fit` / `--apply` / `--from-run` 入口；不重新对原始数据推理（推理由 model-scoring 完成） |

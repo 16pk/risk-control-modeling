@@ -1,0 +1,36 @@
+# feature_config 配置模板（credit-data-analysis pipeline 模式 / training 消费共用）
+# 复制为 feature_config.yaml 并填真实值。
+# 安全红线: 严禁在任何字段硬编码用户ID/手机号/身份证号。
+#
+# v2.1 精简重构约定:
+# - 本文件是切分窗口的「唯一真相」(model.split), 供 credit-data-analysis pipeline 模式
+#   推导 PSI 基准月(=第一个 OOT 月)与 training/tuning/evaluation 消费时即时切分。
+# - 本 skill 不落盘 splits(切分后置到消费方), 不产 IV/PSI 筛选 csv(训练不筛特征)。
+
+model:
+  name: my_analysis           # 本次分析名(用于报告标题和落盘目录)
+  # 全仓库已废除 spark 取数, 仅 local_file 语义: 数据来自本地 sample.parquet。
+  mode: local_file
+  sample_table: local_file
+  label_col: label            # 标签字段(0/1, IV 计算用; sample.parquet 中的列名)
+  dt_col: pday                # 可选, 默认 pday; 日期分区字段(YYYYMMDD 8位或 YYYY-MM-DD; 用于 split 区间与切分)
+  features: []                # 待分析特征清单(三选一: 一、直接填列表 二、填 feature_list_source 指向文件 三、CLI --feature-list-source)
+  feature_list_source: null   # 可选, 特征清单文件(.txt 按行 / .csv 取 feature_name 列); 相对路径先按本 yaml 所在目录解析, 再按 model-skills 根解析
+  invalid_values: [-1, -2, -9, -99, -999, -9999, -99999]  # 哨兵值集合(可选, 仅校验提醒)
+
+  # split 必填(切分窗口唯一真相): 消费方按此区间即时切分 train/test/oot。
+  # 校验规则 (与 model_training 共用 config_io.validate_split_ranges):
+  #   - 三档齐全 (train/test/oot_range 缺一报错)
+  #   - 每档 [起, 止] 为 8 位 YYYYMMDD 且起 ≤ 止
+  #   - 三档时序递增 train<test<oot (允许相邻, 间隔≥1天)
+  split:
+    train_range: ["20260312", "20260430"]
+    test_range:  ["20260501", "20260516"]
+    oot_range:   ["20260517", "20260524"]
+
+analysis:
+  iv:
+    n_bins: 10                # 等频分箱数
+  psi:
+    n_bins: 10                # 等频分箱数
+    warn_threshold: 0.10      # > 阈值标 [PSI_WARN]

@@ -166,8 +166,8 @@ def _parse_range_pair(name: str, value) -> tuple:
 def validate_split_ranges(model: dict) -> None:
     """校验 model.split(可选): train/test/oot 三档 pday 区间的合法性。
 
-    切分唯一真相 = feature-analysis 的 model.split(feature_config.yaml), 由 feature-analysis
-    在切分前强制调用; task-spec 的 sample_config.*.yaml 的 split 段仅「记录/透传」,
+    切分唯一真相 = model.split(feature_config.yaml / train_config.yaml), v2.1 起由 training
+    在训练消费时按区间即时切分; task-spec 的 sample_config.*.yaml 的 split 段仅「记录/透传」,
     调用本函数只校验记录区间的合法性, 不再驱动切分。
 
     仅当 model.split 存在时触发。约束(间隔逻辑):
@@ -224,23 +224,13 @@ def validate_split_ranges(model: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 计算资源路由红线 (compute routing): 单一实现, 供 feature-analysis /
-# classification-model-training / classification-model-tuning / task-spec(Gate P0) 多处消费。
+# 计算资源路由工具 (compute routing, 字节口径 EXP-G-004): 共享工具函数。
 #
-# 口径(2026-08 固化为字节, 来源 model-knowledge EXP-G-004):
-#   「单机 vs 分布式」判据统一为【字节】——预估『拉到本地后的体量』:
-#     <1GB → local   (拉取到本地, 走本地训练流程);
-#     ≥1GB → distributed(直接走 ray-distributed-train 分支, 同时跳过 Stage0 本地特征分析报告;
-#                        分布式平台上的特征分析功能留待未来开发)。
+# 口径(2026-08 固化为字节): 预估『拉到本地后的体量』——<1GB → local; ≥1GB → distributed。
 #
-#   前置裁决节点 = Gate P0(task-spec 阶段, 取数落盘之前), 测量以 Hive 分区级 totalSize 求和
-#   (partition_total_size, LLM 层经 MCP SHOW PARTITIONS/DESCRIBE FORMATTED 测得)为首选;
-#   运行期三处消费(feature-analysis/training/tuning)只是沿用 manifest 里已存档的
-#   engine.ruling 裁定结果, 不再自研第二套探测(R×C 元素数口径已彻底废弃)。
-#
-#   一致性约定: BYTES_ROUTING_SCHEMA_VERSION + routed_at 保证存量 manifest 里的 ruling
-#   原样采用、绝不因阈值口径升级而静默重算;存量 _routing.json {"route": local|distributed}
-#   字段含义保持不变, 只是产生依据换成字节。
+# v2.1 精简说明: task-spec Gate P0 裁决 / feature-analysis 已删除, run_build 计算路由恒为 local,
+# 不再消费 engine.ruling; 本模块的 estimate_size_bytes / route_by_bytes 保留为纯工具函数
+# (task-spec fetch_sample 仍可用于样本体量预估), 但不再作为分布式路由的唯一真源。
 # ---------------------------------------------------------------------------
 
 LOCAL_BYTES_LIMIT = int(1e9)          # 1GB:<1GB 本地 / ≥1GB 分布式

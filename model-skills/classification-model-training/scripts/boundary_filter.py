@@ -138,6 +138,125 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _compute_stats_from_df(
+    df: pd.DataFrame,
+    features: List[str],
+) -> pd.DataFrame:
+    """从数据直接计算 stats 表(unique / std / missing_rate), 供数据直算模式使用。
+
+    v2.1 起切分后置到 training 消费时, feature-analysis 不再产 stats.csv;
+    本函数在内存中按特征直接计算, 替代读 csv。
+    """
+    rows = []
+    for f in features:
+        if f not in df.columns:
+            rows.append({"feature": f, "unique": 0, "std": float("nan"), "missing_rate": 1.0})
+            continue
+        s = df[f]
+        missing_rate = float(s.isna().mean())
+        unique = int(s.nunique(dropna=True))
+        std = float(s.std()) if s.dtype.kind in "fiuf" else float("nan")
+        rows.append({"feature": f, "unique": unique, "std": std, "missing_rate": missing_rate})
+    return pd.DataFrame(rows)
+
+
+def _compute_iv_from_df(
+    df: pd.DataFrame,
+    features: List[str],
+    target: str,
+    iv_max_compute: bool = True,
+) -> pd.DataFrame:
+    """从数据直接计算 IV 表(供 leakage 规则)。IV 需要标签, 无法计算时返回空表。"""
+    if not iv_max_compute or target not in df.columns:
+        return pd.DataFrame()
+    try:
+        from metrics import calc_iv
+    except ImportError:
+        return pd.DataFrame()
+    rows = []
+    for f in features:
+        if f not in df.columns:
+            continue
+        iv = calc_iv(df[f], df[target])
+        rows.append({"feature": f, "iv": iv if iv is not None else float("nan")})
+    return pd.DataFrame(rows)
+
+
+def filter_boundary_features_from_df(
+    baseline_features: List[str],
+    df: pd.DataFrame,
+    *,
+    target: str,
+    enable_constant: bool = True,
+    enable_leakage: bool = True,
+    enable_id_like: bool = True,
+    enable_all_missing: bool = True,
+    iv_max: float = DEFAULT_IV_MAX,
+    const_unique_max: int = DEFAULT_CONST_UNIQUE_MAX,
+    id_like_ratio: float = DEFAULT_ID_LIKE_RATIO,
+    missing_max: float = DEFAULT_MISSING_MAX,
+) -> BoundaryFilterResult:
+    """v2.1 数据直算版边界过滤: 从 DataFrame 直接计算 stats/IV, 不依赖 feature-analysis csv。
+
+    Args:
+        baseline_features: 原始特征列表 (保序)
+        df: 训练用 DataFrame(通常为即时切分后的 train 段, 含 target)
+        target: 标签列名(仅 leakage 规则用; 缺失时该规则跳过)
+    """
+    features = [f for f in baseline_features if f in df.columns]
+    missing_feats = [f for f in baseline_features if f not in df.columns]
+    if missing_feats:
+        print(f"[boundary_filter] 数据中不存在的特征(跳过规则判定, 保留原样): {missing_feats}")
+
+    stats_df = _compute_stats_from_df(df, features)
+    iv_df = _compute_iv_from_df(df, features, target, iv_max_compute=enable_leakage)
+
+    sample_total = int(len(df))
+
+    dropped_by_rule: Dict[str, List[str]] = {}
+    drop_union: Set[str] = set()
+
+    if enable_constant:
+        s = apply_constant_rule(features, stats_df, const_unique_max)
+        dropped_by_rule["constant"] = [f for f in features if f in s]
+        drop_union |= s
+    if enable_leakage:
+        s = apply_leakage_rule(features, iv_df, iv_max)
+        dropped_by_rule["leakage"] = [f for f in features if f in s]
+        drop_union |= s
+    if enable_id_like:
+        s = apply_id_like_rule(features, stats_df, sample_total, id_like_ratio)
+        dropped_by_rule["id_like"] = [f for f in features if f in s]
+        drop_union |= s
+    if enable_all_missing:
+        s = apply_all_missing_rule(features, stats_df, missing_max)
+        dropped_by_rule["all_missing"] = [f for f in features if f in s]
+        drop_union |= s
+
+    kept = [f for f in baseline_features if f not in drop_union]
+    dropped = [f for f in baseline_features if f in drop_union]
+
+    return BoundaryFilterResult(
+        kept_features=kept,
+        dropped_features=dropped,
+        dropped_by_rule=dropped_by_rule,
+        thresholds={
+            "iv_max": iv_max,
+            "const_unique_max": const_unique_max,
+            "id_like_ratio": id_like_ratio,
+            "missing_max": missing_max,
+        },
+        rules_enabled={
+            "constant": enable_constant,
+            "leakage": enable_leakage,
+            "id_like": enable_id_like,
+            "all_missing": enable_all_missing,
+        },
+        sample_total=sample_total,
+        n_before=len(baseline_features),
+    )
+
+
 def filter_boundary_features(
     baseline_features: List[str],
     analysis_dir: str,

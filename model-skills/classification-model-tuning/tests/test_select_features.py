@@ -63,7 +63,11 @@ def _make_baseline_data(tmp_path: Path, n: int = 3000) -> Path:
     """造三档 train/test/oot parquet 到 tmp_path/"splits/", 返回该目录。
 
     与 model-training 数据契约一致(读 <data_dir>/splits/{train,test,oot}.parquet)。
-    样本: 6 个特征, 其中 f3 故意做成"高 PSI + 全缺失"双双触发剔除(由 _fake_analysis_dir 决定)。
+    6 个特征, 数据直算模式(select_features 不再读 feature-analysis csv):
+      - f0: 高缺失(缺失率 0.99 > 0.95)  → 命中 high_missing
+      - f1: 纯噪声, 与 label 无关(IV≈0 < 0.02)  → 命中 low_iv
+      - f2: train/oot 分布漂移(train N(0,1) vs oot N(5,1))  → 命中 high_psi
+      - f3/f4/f5: 正常特征保留
     """
     rng = np.random.default_rng(0)
     X = rng.normal(size=(n, 6))
@@ -75,12 +79,23 @@ def _make_baseline_data(tmp_path: Path, n: int = 3000) -> Path:
     df["pday"] = days
     df["base_score"] = 1 / (1 + np.exp(-(X @ np.array([1, -0.7, 0.5, 0, 0.3, -0.4]))))
     df["user_id"] = [f"u{i}" for i in range(n)]
-    n_train = int(n * 0.6); n_test = int(n * 0.2)
+
+    # f0: 99% NaN(高缺失)
+    mask_f0 = rng.random(n) < 0.99
+    df.loc[mask_f0, "f0"] = np.nan
+
+    # f1: 与 label 无关的独立噪声(低 IV)
+    df["f1"] = rng.normal(size=n)
+
+    # f2: train/oot 分布漂移 → 高 PSI
+    n_train = int(n * 0.6)
+    df.loc[df.index >= n_train, "f2"] += 5.0
+
     splits_dir = tmp_path / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
     df.iloc[:n_train].reset_index(drop=True).to_parquet(splits_dir / "train.parquet", index=False)
-    df.iloc[n_train:n_train + n_test].reset_index(drop=True).to_parquet(splits_dir / "test.parquet", index=False)
-    df.iloc[n_train + n_test:].reset_index(drop=True).to_parquet(splits_dir / "oot.parquet", index=False)
+    df.iloc[n_train:int(n * 0.8)].reset_index(drop=True).to_parquet(splits_dir / "test.parquet", index=False)
+    df.iloc[int(n * 0.8):].reset_index(drop=True).to_parquet(splits_dir / "oot.parquet", index=False)
     return tmp_path
 
 
@@ -96,31 +111,9 @@ def _baseline_cfg(features):
     }
 
 
-def _fake_analysis_dir(tmp_path: Path, features, force_drop) -> Path:
-    """造 feature-analysis csv: force_drop 中的特征故意触发剔除规则。"""
-    ana = tmp_path / "ana"
-    ana.mkdir()
-    # missing: force_drop[0] = 0.99 (>0.95)
-    miss = [0.99 if f == force_drop[0] else 0.05 for f in features]
-    pd.DataFrame({"feature": features, "missing_rate": miss}).to_csv(
-        ana / "stats.csv", index=False
-    )
-    # iv: force_drop[1] = 0.005 (<0.02)
-    ivs = [0.005 if f == force_drop[1] else 0.30 for f in features]
-    pd.DataFrame({"feature": features, "iv": ivs}).to_csv(
-        ana / "iv_table.csv", index=False
-    )
-    # psi: force_drop[2] = 0.5 (>0.10)
-    psis = [0.5 if f == force_drop[2] else 0.03 for f in features]
-    pd.DataFrame({"feature": features, "psi": psis}).to_csv(
-        ana / "psi_table.csv", index=False
-    )
-    return ana
-
-
 @pytest.mark.slow
 def test_end_to_end_select_features_full_layout(tmp_path):
-    """跑 baseline → 造 analysis csv → select_features → 验证产物 + 配置。"""
+    """跑 baseline → 数据直算筛选 → select_features → 验证产物 + 配置。"""
     from run_build import run as run_training
 
     data_dir = _make_baseline_data(tmp_path)
@@ -130,16 +123,14 @@ def test_end_to_end_select_features_full_layout(tmp_path):
                             str(session_dir), version="v1")
     baseline_dir = Path(res_base["run_dir"])
 
-    # 让 f0(高缺失) / f1(低 IV) / f2(高 PSI) 各因不同规则被剔除
-    ana_dir = _fake_analysis_dir(tmp_path, features, force_drop=("f0", "f1", "f2"))
-
     args = argparse.Namespace(
         baseline_run=str(baseline_dir),
-        analysis_dir=str(ana_dir),
+        analysis_dir=None,
         label=None,
         version=None,
         output_dir=None,
         auto_apply=True,
+        importance_gain_pct=None,
         no_psi=False, no_iv=False, no_missing=False,
         psi_threshold=0.10, iv_threshold=0.02, missing_threshold=0.95,
     )
@@ -170,11 +161,13 @@ def test_end_to_end_select_features_full_layout(tmp_path):
     sel = runtime["selection"]
     assert set(sel["kept_features"]) == {"f3", "f4", "f5"}
     assert set(sel["dropped_features"]) == {"f0", "f1", "f2"}
-    assert sel["dropped_by_rule"]["high_missing"] == ["f0"]
-    assert sel["dropped_by_rule"]["low_iv"] == ["f1"]
-    assert sel["dropped_by_rule"]["high_psi"] == ["f2"]
+    # 数据直算模式: f0 高缺失(同时因大量 NaN 致 IV 偏低命中 low_iv), f1 独立噪声低 IV, f2 分布漂移高 PSI
+    assert "f0" in sel["dropped_by_rule"]["high_missing"]
+    assert "f1" in sel["dropped_by_rule"]["low_iv"]
+    assert "f2" in sel["dropped_by_rule"]["high_psi"]
     assert sel["rules_enabled"] == {"high_psi": True, "low_iv": True, "high_missing": True}
-    assert runtime["analysis_dir"] == str(ana_dir.resolve())
+    # v2.1 数据直算: analysis_dir 记录为 None(不再读 feature-analysis csv)
+    assert runtime["analysis_dir"] is None
 
     # 关键文件可用
     assert (new_dir / "model" / "model.json").exists()
@@ -194,4 +187,7 @@ def test_end_to_end_select_features_full_layout(tmp_path):
     dropped = used_list[used_list["status"].str.startswith("dropped_")]
     assert set(kept["feature_name"]) == {"f3", "f4", "f5"}
     assert set(dropped["feature_name"]) == {"f0", "f1", "f2"}
-    assert set(dropped["dropped_by_rule"]) == {"high_missing", "low_iv", "high_psi"}
+    # 数据直算: f0 命中 high_missing(但 used-feature-list 单规则标记可能显示 low_iv),
+    # 故这里只断言规则子集覆盖三规则、且 dropped 集合正确
+    assert set(dropped["dropped_by_rule"]) <= {"high_missing", "low_iv", "high_psi"}
+    assert {"low_iv", "high_psi"} <= set(dropped["dropped_by_rule"])
