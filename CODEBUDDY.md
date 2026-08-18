@@ -19,6 +19,7 @@ Python 3.10+；建模依赖 xgboost / lightgbm / scikit-learn / optbinning / sha
 - `agents/risk-control-modeling.md` — 专家知识体（薄文档：角色 / 核心原则 / 技能职责映射 / 全局红线 / 错误恢复），只承载行为规则，实现细节以下沉 skill 为准。
 - `model-skills/{name}/` — 每个 skill：`SKILL.md`（frontmatter `name` == 目录名）+ `scripts/` + `references/` + `tests/`。
   - classification 专属 skill 加 `classification-` 前缀；跨流程共享 skill（`data-cleaning`、`credit-data-analysis`、`model-knowledge`、`model-scoring`、`score-to-fico`）不加前缀。版本迭代信息见根目录 `CHANGELOG.md`。
+  - `classification-model-experiments` — 独立实验台（与 training/tuning 解耦）：样本×特征正交矩阵 + 对抗验证 + Optuna 调优 + 转正；仅消费 `sample.parquet` + `feature-list.csv` + `model.split`。**红线例外（用户授权）：对抗格/IV-PSI 格 OOT 可参与对抗训练与筛选统计（禁早停/禁进训练/禁结构选择），OOT 指标标注乐观偏差**。
 - `model-skills/_modelevo-shared/scripts/` — 公共代码（`config_io.py` 配置读写 + 数据安全红线、`date_utils.py` 日期归一化、`gen_feature_list.py`、`metrics.py` 统一指标库（AUC/KS/Gini/PSI/IV/分桶）、`record_stage.py`（保留文件但不再被编排调用）），各 skill 经 `_bootstrap.py` 注入。
 - 契约：样本 `id + 特征列 + label`（可含日期列），落盘 `sample.parquet` + `feature-list.csv`；默认 id=`fuid`、日期=`f_p_date`、格式 `YYYY-MM-DD`。
 - 数据链路唯一 local_file：task-spec(local_file) → data-cleaning → credit-data-analysis → training。**全仓库已废除 spark 取数**。

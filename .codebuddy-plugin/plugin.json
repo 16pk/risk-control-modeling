@@ -1,6 +1,6 @@
 {
   "name": "risk-control-modeling",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "Interactive end-to-end credit risk modeling expert: requirement clarification, data cleaning, credit feature analysis (monthly PSI/IV), tree-model development & evaluation (XGBoost/LightGBM/DNN/LR, AUC/KS/PSI), default model scoring, and on-demand FICO/business reports — with a single orchestrator, split deferred to training-time, unified shared metrics, and key decisions confirmed by the user.",
   "agents": ["./agents/risk-control-modeling.md"],
   "skills": [
@@ -11,6 +11,7 @@
     "./model-skills/classification-model-development",
     "./model-skills/classification-model-training",
     "./model-skills/classification-model-tuning",
+    "./model-skills/classification-model-experiments",
     "./model-skills/classification-model-comparison",
     "./model-skills/credit-model-report",
     "./model-skills/score-to-fico",

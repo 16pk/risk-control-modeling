@@ -5,7 +5,7 @@ credit_dpd30 — LightGBM 通用训练脚本（自定义路径，套框架 8 阶
 用法:
   python train_lgb.py --run-label feat-v1 --features-csv <csv> [--params-json <json>]
 产物: new-models/lgb-{run_label}/{config,features,model,evaluation,predictions,explainability,logs}
-纪律: val 段早停（OOT 仅评估）+ 自动 scale_pos_weight（不欠采样）
+纪律: val 段早停；OOT 仅评估与实验比较（禁早停/禁进训练/禁统计量计算）+ 自动 scale_pos_weight（不欠采样）
 """
 import argparse
 import json

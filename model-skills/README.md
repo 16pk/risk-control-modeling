@@ -22,6 +22,7 @@ model-skills/
 ├── classification-model-development/    # 模型开发总控（唯一调度者，吸收原 orchestration）
 ├── classification-model-training/       # 模型训练（xgb / dnn / lr）+ 内嵌评估（eval_single.py）
 ├── classification-model-tuning/         # 模型调参 / 特征筛选（可选）
+├── classification-model-experiments/    # 实验台：样本×特征正交矩阵 + 对抗验证 + Optuna 调优 + 转正（独立模块）
 ├── classification-model-comparison/     # 多模型 N-way 对比（可选）
 ├── credit-model-report/                 # 业务评估报告（回溯表/Lift/SWAP/打分分布，模板化 Excel，可选）
 ├── score-to-fico/                       # 概率分 → FICO 标准分转换（可选，仅用户主动触发）
@@ -52,6 +53,7 @@ model-skills/
 | `classification-model-development` | 开发总控（唯一调度者）：串联 task-spec → data-cleaning → credit-data-analysis → training → 收口打分，管理路径接力、决策点询问（2 必问 + 1 确认）、report.md 回填（4 节）、断点续跑 |
 | `classification-model-training` | 训练 xgb / dnn / lr 模型，读 `sample.parquet` + `model.split` 即时切分（写 run 内部 `data/splits/` 临时目录），内嵌 `eval_single.py` 评估产标准化三件套，并与历史 baseline 做 AUC/KS/分档多维对比 |
 | `classification-model-tuning` | 基于 baseline run 做超参调优（Optuna）或特征筛选（PSI/IV/缺失率，数据直算），产 `-tuned` / `-feat` 新 run。**可选：仅用户主动要求时调度** |
+| `classification-model-experiments` | **实验台（独立模块）**：lgb baseline → 样本方案（全量/最近N月/线性时间加权/对抗剔除）× 特征方案（全量/importance 95%/IV-PSI/对抗剔除）正交矩阵 → 对抗验证（lgb train-vs-oot 双产出）→ leaderboard（OOT AUC 排序 + 乐观偏差标注）→ 每算法 winner Optuna 邻域调优（-opt）→ top10 展示用户确认后转正（`new-models/` + `finalized_model.json`）。**完全独立于 training/tuning，仅消费 `sample.parquet` + `feature-list.csv` + `model.split`**。**红线例外（用户授权本模块）：对抗格/IV-PSI 格 OOT 可参与对抗训练与筛选统计（禁早停/禁进训练/禁结构选择），OOT 指标标注乐观偏差** |
 | `classification-model-comparison` | 多模型 N-way 横向对比，消费 training 产出的 eval JSON 做 delta 分析与缺口清单，输出含条件格式的 Excel。**可选：仅用户主动要求或配 `baseline_eval_dir` 时** |
 | `credit-model-report` | 从打分 CSV 生成**业务评估报告**（Excel：回溯表/建模信息/KS/特征重要性/Lift+SWAP/打分分布 PSI+分桶+分段逾期率），支持新 vs 基线模型 SWAP 迁移与客群过滤。**可选：仅用户主动要求** |
 | `score-to-fico` | **概率分 → FICO 标准分转换**（LR 校准 + 标准分映射，范围约 [400,780]）。**可选：仅用户主动要求（收口后不再默认询问）**，消费 model-scoring 打分结果，产 session 根 `fico/` |
@@ -192,3 +194,4 @@ runs/20260624-114630-draw_willingness/
 - **文件落盘**：需求和分析结果必须保存为文件，不能只留在对话中
 - **演化闭环**：training 内嵌评估 → 可选 comparison → 回流 development/training 形成多轮迭代；完成后归档至 `model-knowledge`
 - **数据安全红线**：`config_io.check_sensitive` 拦截配置中硬编码的身份证号 / 手机号；`where` / `sample_table` 等字段严禁写入明细个人数据
+- **实验台红线例外（仅 `classification-model-experiments`）**：用户授权对抗格 / IV-PSI 格可让 OOT 参与对抗训练与筛选统计（禁早停 / 禁进训练集 / 禁结构超参选择），对应 OOT 指标标注乐观偏差

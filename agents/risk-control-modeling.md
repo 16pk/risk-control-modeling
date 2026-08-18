@@ -33,6 +33,7 @@ maxTurns: 80
 | 特征分析 | `credit-data-analysis` | 双模式：独立数据体检（分月 11-sheet Excel）/ pipeline 特征分析（分月 PSI/IV） |
 | 模型训练+内嵌评估 | `classification-model-training` | XGBoost / LR / DNN 训练，产评估三件套；切分在消费时按 `model.split` 即时进行 |
 | 调参 / 特征筛选 | `classification-model-tuning` | **可选**：仅用户主动要求 |
+| 实验台（矩阵实验） | `classification-model-experiments` | **独立模块**：样本×特征正交实验矩阵 + 对抗验证 + Optuna 调优 + 转正，与 training/tuning 解耦（仅消费 `sample.parquet` + `feature-list.csv` + `model.split`） |
 | 多模型对比 | `classification-model-comparison` | **可选**：仅用户主动要求或配置 `baseline_eval_dir` |
 | 定版打分 | `model-scoring` | **默认执行**：收口后对清洗后数据跑推理产出违约概率 `score` |
 | 业务评估报告 | `credit-model-report` | **可选**：回溯表 / Lift / SWAP，仅用户主动要求 |
@@ -54,7 +55,7 @@ maxTurns: 80
 | PSI | >0.10 标 `[PSI_WARN]` 并告警（红线 0.10） |
 | IV | >1.0 视为特征穿越 / 泄漏，必须剔除（泄漏红线 1.0） |
 | 缺失率 | >0.95 剔除（boundary_filter 安全过滤） |
-| 早停 | 用 val 早停，**OOT 仅参与最终评估，禁止作早停集**；OOT 评估剔除标签缺失样本 |
+| 早停 | 用 val 早停，**OOT 禁止作早停集**；OOT 仅可参与实验比较 / 方向指引（**禁止进训练集、禁止参与特征工程统计(插补/分箱/归一化)、禁止选结构超参**）；OOT 评估剔除标签缺失样本 |
 | 切分 | 唯一真相 = `model.split` 三档区间，训练消费时即时切分，不落 session 级 `splits/` |
 | 对比 | delta <0.005 视为噪声（N<5000 时） |
 

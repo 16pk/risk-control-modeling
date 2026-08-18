@@ -32,7 +32,7 @@ python <model-skills>/classification-model-development/scripts/list_sessions.py
 ### 2.1 LightGBM 官方自定义路径（引擎无原生 lgb）
 
 > 本 skill 的 `run_build.py` 原生支持 xgb/dnn/lr。**LightGBM 属自定义路径**：使用官方模板 `scripts/templates/train_lgb_template.py`（由真实项目验证产出，产物契约与框架 run 对齐）。模板特点：
-> - 读 `splits/{train,test,oot}.parquet`（或即时切分的 run 内部 `data/splits/`），val=test 档早停、OOT 仅评估；自动 `scale_pos_weight`（不欠采样）
+> - 读 `splits/{train,test,oot}.parquet`（或即时切分的 run 内部 `data/splits/`），val=test 档早停、OOT 评估 + 实验横向比较（不进训练、不参与早停与特征工程统计）；自动 `scale_pos_weight`（不欠采样）
 > - 产物：`new-models/lgb-{run_label}/{config,features,model,evaluation,predictions,explainability,logs}`（config.json 落 run 根目录 + config/ 子目录、eval 文件名 `{run_name}_{split}_eval.*` 标准命名、model/model.pkl + model/_manifest.json、features/used-feature-list.csv）
 > - 用法：`python templates/train_lgb_template.py --session-dir <session> --run-label v1 --features-csv <feature-list.csv> [--params-json <best_params.json>] [--early-stopping 100]`
 > - 与框架 run 的差异：超参确认结论由 LLM 在对话中记录并写入 `config.json`（模板已含），不经过 `run_build.py` 的 2.5 节门禁自动落盘；评估三件套由模板内部调 `../eval_single.py` 产出
@@ -81,7 +81,7 @@ python <skill_dir>/scripts/run_build.py \
 │ reg_alpha        │ 0.1     │ L1 正则                  │ 0/1.0    │
 │ reg_lambda       │ 1.0     │ L2 正则                  │ 0.5/2.0  │
 │ scale_pos_weight │ auto    │ 坏率<5% 不欠采样自动设置  │ 手动值   │
-│ early_stopping   │ 30      │ Test 段早停，OOT 仅评估   │ 50/100   │
+│ early_stopping   │ 30      │ Test 段早停，OOT 评估+实验比较 │ 50/100   │
 │ random_state     │ 42      │ 可复现                   │ -        │
 └──────────────────┴─────────┴──────────────────────────┴──────────┘
 ① 用户确认「按此执行」→ 训练
@@ -90,7 +90,7 @@ python <skill_dir>/scripts/run_build.py \
 ```
 
 **纪律**：
-1. **OOT 禁止作早停集**（早停只用 train/val，OOT 仅最终评估），在确认表里显式标注。
+1. **OOT 禁止作早停集**（早停只用 train/val）；**OOT 仅可参与实验比较 / 方向指引，禁止进训练集、禁止参与特征工程统计（插补/分箱/归一化）、禁止参与结构超参选择**，在确认表里显式标注。
 2. **不平衡处理默认不欠采样**：正样本率 <5% 时才考虑下采样至 1:8~1:10 并需概率校准，其余用 `scale_pos_weight`；处理方式在确认表中展示。
 3. **评估数据剔除标签缺失样本**：即时切分时剔除 NaN label（`run_build._load_and_split_from_sample` 过滤 `label ∈ {0,1}`），评估组装（`stages/eval_data.py`）再防御性剔除一次，避免 AUC/KS 因 NaN 报错（尤其 OOT 段观察期不足时）。
 4. 确认结论（选 ①②③ + 最终参数集）写入 run 的 `config.json` 与 `logs/run.log`，保证可追溯。

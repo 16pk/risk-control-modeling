@@ -220,6 +220,7 @@ python <skill_dir>/scripts/select_features.py \
 | ⚠️ 交互确认流程 | 默认打印诊断/剔除明细后 `[Y/n]` 确认再重训;`--auto-apply` 跳过;非 TTY 环境按默认值处理;**well_fit 状态下未 `--auto-apply` 时默认不重训** |
 | ⚠️ Optuna 依赖 | `--method rule`(默认)无新依赖;`--method optuna` 需 `pip install --user "optuna<4"`,首次缺包清晰报错 |
 | ⚠️ select_features 不调参 | 仅缩小特征集,用 baseline 的 `used_params` 直接重训;如需调参走流程 A 或串联 `-feat → -tuned` |
+| ⚠️ OOT 红线（实验评选台） | 调优/筛选用 val(test) 早停与选参，**OOT 仅用于横向比较实验 / 指引方向**：禁止 OOT 作早停集、进训练集、参与特征工程统计（插补/分箱/归一化）、参与结构超参选择；Optuna 目标恒为 val AUC |
 
 > 覆盖范围、不覆盖清单、何时用、session 约定、Optuna 搜索空间详情(各 algo 调哪些超参)、异常处理全表详见 `references/constraints-and-exceptions.md`。
 

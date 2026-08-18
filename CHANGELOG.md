@@ -2,6 +2,19 @@
 
 本文件只记录专家包与建模框架的**版本迭代信息**（结构变更、职责迁移、产物调整），供包维护者参考。用户调用 skill 时无需阅读；各 skill 的 SKILL.md 只描述当前状态，不携带版本标记。
 
+## v2.2（2026-08-18）
+
+新增独立实验台模块 `classification-model-experiments`（与 training/tuning 完全解耦）：
+
+- **模块形态**：新 skill + 独立 CLI（`run_experiments.py`），不挂 development Stage 4，任意 session 直接调用；仅消费 `sample.parquet` + `feature-list.csv` + `model.split`。
+- **实验矩阵**：lgb/xgb 串行；样本方案（full / recent-N / 线性时间加权 / 对抗剔除）× 特征方案（all 安全过滤 / importance 95% 截断（依赖同样本 all 格，严格正交）/ IV-PSI 单格直算 / 对抗剔除）笛卡尔积；`lgb-full-all-v1` 兼任全局 baseline（不重复跑）。
+- **对抗验证**：lgb train-vs-oot 对抗分类器，双产出（样本剔除 + 特征剔除），剔除幅度 AI 推荐 + 用户确认。
+- **评选与调优**：leaderboard 按 OOT AUC 排序（乐观偏差标注 + 失败清单）；每算法 winner 1 组 Optuna 邻域调优（TPE seed=42 / 目标 val AUC / 100 轮早停 / 默认 25 trials）产 `-opt` run（复用 winner 数据快照）。
+- **转正闭环**：top10 展示 + 用户确认/改选 → 复制 `new-models/{algo}-v{N}/` + 落 `finalized_model.json`（结构对齐 model-scoring 消费契约）。
+- **架构纪律**：算法无关（仅 hyperparams/algo_factory/模板与算法相关）；精简产物（每格 = model/ + evaluation/ + feature_importance.csv + manifest.json + logs/ + scripts 代码快照 + data/ 输入快照）；仅复用 `_modelevo-shared`（metrics/config_io/date_utils/gen_feature_list），禁跨 skill import；训练代码权威模板自包含 + 每格快照 + `code_sha256`，可复现。
+- **红线例外（用户授权本模块）**：对抗格 OOT 可参与对抗分类器训练与样本/特征筛选统计；IV-PSI 格 OOT 参与 PSI 统计；均禁 OOT 作早停集/进训练集/结构超参选择，OOT 指标标注乐观偏差。
+- 四步注册完成：plugin.json / model-skills README / agents 职责映射表 / 本 CHANGELOG。
+
 ## v2.1（2026-08-17）
 
 v2.0 精简重构的落地细化（当前版本）。
