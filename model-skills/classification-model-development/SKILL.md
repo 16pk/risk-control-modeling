@@ -1,6 +1,6 @@
 ---
 name: classification-model-development
-description: 模型开发唯一调度者。从需求澄清到收口打分的整个建模主链路都由本 skill 编排：调度 task-spec / data-cleaning / credit-data-analysis / classification-model-training / model-scoring 等 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、session 决议。v2.1 起吸收原 orchestration 职责（session 创建、报告初始化、数据源澄清），编排层由三层合并为一层。触发词：开发模型、跑 baseline、调参、多模型对比、列历史 session、建模。
+description: 模型开发唯一调度者。从需求澄清到收口打分的整个建模主链路都由本 skill 编排：调度 task-spec / data-cleaning / credit-data-analysis / classification-model-training / model-scoring 等 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、session 决议。触发词：开发模型、跑 baseline、调参、多模型对比、列历史 session、建模。
 ---
 
 # 模型开发总控（classification-model-development）
@@ -8,13 +8,6 @@ description: 模型开发唯一调度者。从需求澄清到收口打分的整�
 ## 1. 角色与边界
 
 你是建模任务的**唯一调度者**,**不是工程师**。从用户确认建模意图后，本 skill 串联整个主链路，管理"何时跑哪个 skill、读哪些产物、问用户什么决策、怎么写回 report.md、怎么断点续跑"。
-
-> **v2.1 精简重构**：
-> - 编排层合并为一层：原 `model-task-routing`（二分类判定）与 `classification-model-orchestration`（session 创建/报告初始化/数据源澄清）已删除并并入本 skill。
-> - 切分后置：不再有 feature-analysis 阶段产 `splits/`；切分由 `classification-model-training` 消费时按 `model.split` 即时进行（写 run 内部 `data/splits/` 临时目录）。
-> - 特征分析由 `credit-data-analysis` 承接（pipeline 模式），产分月 PSI/IV 体检报告（xlsx + md），PSI 基准月默认第一个 OOT 月（须用户确认）。
-> - 可追溯性收敛：删除 `record_stage` 脚本快照链 / `render-check` / `deliverables.md`；保留 `_manifest.json`（断点续跑）+ 单份 `report.md`（4 节）。
-> - 训练过程不通过 IV/PSI 指标筛选特征（特征筛选 `select_features` 降级为仅用户主动要求）。
 
 主链路（5 步）：
 ```
@@ -61,6 +54,7 @@ Stage 5: 收口 — 回填 report.md, 落 finalized_model.json
 Stage 6: model-scoring (定版模型打分, **默认执行**, 用户可叫停)
    ↓ 产 scoring/score_sample.parquet
 Stage 7 (可选): score-to-fico / credit-model-report — 仅用户主动触发, 不默认询问
+   ↓ credit-model-report 的 xlsx 报告落 <session_dir>/model-report/ (严禁落 scoring/ 子目录)
 ```
 
 **关键**: Stage 4 是 loop。每个 run 完成后都问用户"继续迭代 / 停下收口"，不自动推进。
@@ -74,7 +68,7 @@ Stage 7 (可选): score-to-fico / credit-model-report — 仅用户主动触发,
 | Stage 2 | `sample.parquet` + `feature_config.yaml` | `sample-features/credit-data-analysis/{特征分析结果.xlsx, 特征分析结果.md, _manifest.json}` | `credit-data-analysis/scripts/feature_analysis.py --split-config <feature_config.yaml> --base-month <确认的OOT首月>` |
 | Stage 3 | `sample.parquet` + `train_config.yaml`（含 `model.split`） | `new-models/{algo}-v{N}/` | `classification-model-training/scripts/run_build.py --config <train_config.yaml> --output_dir <session_dir> --version v1` |
 | Stage 4a | baseline run dir | `new-models/{algo}-tuned-v{N}/` | `classification-model-tuning/scripts/run_tuning.py --baseline_run <baseline_run_dir> [--method rule\|optuna]` |
-| Stage 4c | baseline run dir | `new-models/{algo}-feat-v{N}/` | `classification-model-tuning/scripts/select_features.py --baseline_run <baseline_run_dir>`（数据直算，不依赖 feature-analysis csv） |
+| Stage 4c | baseline run dir | `new-models/{algo}-feat-v{N}/` | `classification-model-tuning/scripts/select_features.py --baseline_run <baseline_run_dir>`（数据直算） |
 | Stage 5 | `new-models/{run}/model/model_meta.json` | `finalized_model.json` | `model-scoring/scripts/mark_finalized.py --session-dir <session_dir> --run-name {run}` |
 | Stage 6 | `finalized_model.json` + `sample.parquet` | `scoring/score_sample.parquet` | `model-scoring/scripts/score_data.py --model-path <session_dir>/new-models/{run}/model --data <session_dir>/sample-features/data-cleaning/sample.parquet --out <session_dir>/scoring/score_sample.parquet` |
 
@@ -84,18 +78,25 @@ Stage 7 (可选): score-to-fico / credit-model-report — 仅用户主动触发,
 
 ## 5. 决策点话术（门禁收敛）
 
-v2.1 起**必问 2 项 + 确认 1 项**，其余用默认值 + 报告展示：
+> 本 skill 是建模链路**唯一交互确认入口**：所有影响建模结论的关键决策，必须先给出**方案 + 理由 + 备选**，等待用户确认后再执行；仅当用户明确说"按默认 / 你定"时才可用默认值快速通过。**严禁在关键决策上擅自拍板执行。**
+
+**必问 2 项 + 确认 1 项**，其余用默认值 + 报告展示：
 
 | 门禁 | 时机 | 处理 |
 |------|------|------|
-| #1 预测目标 Y 定义 | Stage 0 | **必问**（目标定错全白做） |
-| #2 样本切分窗口 | Stage 0 | **必问**（OOT 晚于训练窗，跨时间稳定性是风控灵魂） |
-| 超参确认 | Stage 3 前 | **一次确认**：列出默认参数表，用户说"按默认"即通过 |
+| #1 预测目标 Y 定义 | Stage 0 | **必问**：预测什么行为 / 好坏标签定义 / 观察窗口 / 数据来源。标签列由特征名识别后请用户确认，识别不到时引导定义观察期/表现期/好坏标准 |
+| #2 样本切分窗口 | Stage 0 | **必问**：Train/Test/OOT 三档起止 + 切分方式（时间/随机）。切分窗口定义是训练消费唯一真相，三档区间不强制时间递增（时序排布由业务侧保证）；train/test 开发集允许随机切分（记录 seed）；OOT 评估剔除标签缺失样本；无时间字段时退化为分层随机切分并显式说明局限 |
+| 超参确认 | Stage 3 前 | **一次确认**：主动展示完整超参数表（参数/值/理由/备选），或 Optuna 搜索空间；用户说"按默认"即通过 |
 | PSI 基准月 | Stage 2 | **确认**：默认第一个 OOT 月，可覆盖 |
 | 特征筛选 | Stage 4 | **不问**：默认不筛（IV/PSI 筛选已从训练流程移除），报告展示 |
 | 不平衡处理 | Stage 3 | **不问**：默认 `scale_pos_weight` 自动，正样本率 <1% 时提示一次 |
 | 定版打分 | Stage 6 | **默认执行**：收口后直接打分，用户可叫停 |
 | FICO / 业务报告 | Stage 7 | **不默认询问**：仅用户主动触发 |
+
+**确认交互方式**：
+- 每个门禁给出「推荐方案（默认值）」+ 简要理由 + 可选替代项，等待用户确认或指示调整；**用户未确认前不得推进关键执行**（跑训练、大规模调参等重操作）。
+- 若用户提供的信息与门禁默认冲突，**以用户信息为准**（除非自相矛盾，需指出并要求澄清）。
+- 同一会话内不重复询问已确认项。
 
 **决策点必问（迭代决策点）**：Stage 4 每个 run 完成后都询问下一步，不自动推进：
 ```
@@ -133,7 +134,7 @@ python classification-model-development/scripts/fill_report.py \
 | 三、模型迭代 | 每个 run 完成后 | `new-models/*/config.json.runtime`（run_name / algo / 三档 AUC） |
 | 四、结论与交付 | Stage 5/6 | 上线候选 / 定版模型 / 打分结果 / 待处理项 |
 
-> v2.1 已删除 render-check / deliverables.md / record_stage。数字一致性由 `fill_report.py` 直接读产物文件保证（不从对话手敲）。
+数字一致性由 `fill_report.py` 直接读产物文件保证（不从对话手敲）。
 
 ## 7. 断点续跑
 

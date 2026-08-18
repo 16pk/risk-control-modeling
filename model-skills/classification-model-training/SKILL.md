@@ -6,13 +6,13 @@ description: 端到端训练 xgboost/dnn/lr 二分类模型——读上游 data-
 # classification-model-training
 
 训练为进程内实现(xgboost / dnn / lr),按 `model.algo` 切换;由 `scripts/run_build.py` 编排。
-共享配置读写代码位于 `model-skills/_modelevo-shared/scripts/`(config_io),通过 `scripts/_bootstrap.py` 注入;源在仓库根 `_modelevo-shared/scripts/`,由 `install.sh` 复制。
+共享配置读写代码位于 `model-skills/_modelevo-shared/scripts/`(config_io),通过 `scripts/_bootstrap.py` 注入。
 
 ## 1. 输入依赖
 
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
-| `sample.parquet` + `model.split` | ✅ | 上游 `data-cleaning` 产 `sample.parquet`;`train_config.yaml` 的 `model.split` 为切分唯一真相 | v2.1 切分后置:本 skill 在训练消费时按 `model.split` 区间即时切分三档(写 run 内部 `data/splits/` 临时目录);旧 session 可直接读 `splits/{train,test,oot}.parquet` |
+| `sample.parquet` + `model.split` | ✅ | 上游 `data-cleaning` 产 `sample.parquet`;`train_config.yaml` 的 `model.split` 为切分唯一真相 | 本 skill 在训练消费时按 `model.split` 区间即时切分三档(写 run 内部 `data/splits/` 临时目录);旧 session 可直接读 `splits/{train,test,oot}.parquet` |
 | 特征清单(`features` / `feature_list_source`) | ✅ | 用户配置 或 上游 `data-cleaning` 派生的 `feature-list.csv` | 候选特征清单强制过**边界安全过滤**(可配 `model.boundary_filter.enable_*=false` 关闭),剔除 4 类会让训练失败或泄漏的特征(常量/泄漏/ID 类/全缺失,规则表见第 3 节);过滤后剩余特征即入模特征集;剔除弱特征(低 IV/高 PSI)的优化筛选不在本 skill,走 `classification-model-tuning` 产 `-feat` 新 run;`features` 留空则走 `feature_list_source`(各业务域清单见 `model-knowledge/assets/feature-knowledge/feature-knowledge.md` 索引,如 `feature-list/feature-list-user-operation-v1.csv`) |
 | `train_config.yaml` | ✅ | 复制 `config/train_config.example.yaml` 后填写 | 填模型名/标签列/特征清单;可选 `model.baseline_eval_dir` 配基线评估目录以走 N-way 对比;可选 `model.run_label` 当作本次 run 的版本号(如 v1/v2)。**输入 yaml 必须放 `<session_dir>/new-models/{algo}-v{N}/config/` 下**(即 model 内部 config 目录),**严禁落到 session 根目录或 `<skill_dir>/config/` 下**;`run_build.py` 会把 `--config` 指向的 yaml 视为输入源,`write_train_config_yaml` 在同目录原地写 `_manifest.json`(含 `source_yaml` 指向自身),不做副本拷贝 |
 | `session_dir` | ✅ | 上游 `classification-model-development` 传入 | 本 skill 不负责 session 决议;无 session 上下文时请先调 `classification-model-development/scripts/list_sessions.py` 列历史 sessions |
@@ -32,10 +32,10 @@ python <model-skills>/classification-model-development/scripts/list_sessions.py
 ### 2.1 LightGBM 官方自定义路径（引擎无原生 lgb）
 
 > 本 skill 的 `run_build.py` 原生支持 xgb/dnn/lr。**LightGBM 属自定义路径**：使用官方模板 `scripts/templates/train_lgb_template.py`（由真实项目验证产出，产物契约与框架 run 对齐）。模板特点：
-> - 读 `splits/{train,test,oot}.parquet`（或 v2.1 即时切分的 run 内部 `data/splits/`），val=test 档早停、OOT 仅评估；自动 `scale_pos_weight`（不欠采样）
+> - 读 `splits/{train,test,oot}.parquet`（或即时切分的 run 内部 `data/splits/`），val=test 档早停、OOT 仅评估；自动 `scale_pos_weight`（不欠采样）
 > - 产物：`new-models/lgb-{run_label}/{config,features,model,evaluation,predictions,explainability,logs}`（config.json 落 run 根目录 + config/ 子目录、eval 文件名 `{run_name}_{split}_eval.*` 标准命名、model/model.pkl + model/_manifest.json、features/used-feature-list.csv）
 > - 用法：`python templates/train_lgb_template.py --session-dir <session> --run-label v1 --features-csv <feature-list.csv> [--params-json <best_params.json>] [--early-stopping 100]`
-> - 与框架 run 的差异：超参确认结论由 LLM 在对话中记录并写入 `config.json`（模板已含），不经过 `run_build.py` 的 2.5 节门禁自动落盘；评估三件套由模板内部调 `../eval_single.py`（v2.1 已迁入本 skill scripts/）产出
+> - 与框架 run 的差异：超参确认结论由 LLM 在对话中记录并写入 `config.json`（模板已含），不经过 `run_build.py` 的 2.5 节门禁自动落盘；评估三件套由模板内部调 `../eval_single.py` 产出
 
 **输入 yaml 落盘(强制)**:输入 yaml 必须落 `<session_dir>/new-models/{algo}-v{N}/config/train_config.yaml`(model 内部 config 目录),不要放 `<skill_dir>/config/` 或 session 根目录。流程:
 
@@ -51,8 +51,8 @@ python <skill_dir>/scripts/run_build.py \
 ```
 
 `--data_dir` 可选,默认从同 session 下 `<session_dir>/sample-features/` 推断:
-- v2.1 新链路: 读 `data-cleaning/sample.parquet` + `train_config.yaml` 的 `model.split`(train/test/oot 三档区间),由 `run_build` 在训练消费时**即时切分**(写 run 内部 `data/splits/` 临时目录,不落 session 级 `splits/`)。
-- 旧 session 兼容: 直接读 `splits/{train,test,oot}.parquet`(由旧 feature-analysis 产出)。
+- 新链路: 读 `data-cleaning/sample.parquet` + `train_config.yaml` 的 `model.split`(train/test/oot 三档区间),由 `run_build` 在训练消费时**即时切分**(写 run 内部 `data/splits/` 临时目录,不落 session 级 `splits/`)。
+- 旧 session 兼容: 直接读 `splits/{train,test,oot}.parquet`。
 
 若需用其他数据,显式传 `--data_dir` override。`--output_dir` 直接传 `<session_dir>`,`run_build` 会在其下落 `new-models/{algo}-v{N}/`(无 `classification-model-training/` 中间层)。test.parquet 当 val 段(early stopping);进程内用调优超参训练(`tune_train.TUNED_PARAMS`: depth 6 / lr 0.03 / n 800 + early-stop;比 `engines/_xgb/entry.py` 的强正则默认更高容量,避免欠拟合)。
 
@@ -92,7 +92,7 @@ python <skill_dir>/scripts/run_build.py \
 **纪律**：
 1. **OOT 禁止作早停集**（早停只用 train/val，OOT 仅最终评估），在确认表里显式标注。
 2. **不平衡处理默认不欠采样**：正样本率 <5% 时才考虑下采样至 1:8~1:10 并需概率校准，其余用 `scale_pos_weight`；处理方式在确认表中展示。
-3. **评估数据剔除标签缺失样本**：v2.1 即时切分时剔除 NaN label（`run_build._load_and_split_from_sample` 过滤 `label ∈ {0,1}`），评估组装（`stages/eval_data.py`）再防御性剔除一次，避免 AUC/KS 因 NaN 报错（尤其 OOT 段观察期不足时）。
+3. **评估数据剔除标签缺失样本**：即时切分时剔除 NaN label（`run_build._load_and_split_from_sample` 过滤 `label ∈ {0,1}`），评估组装（`stages/eval_data.py`）再防御性剔除一次，避免 AUC/KS 因 NaN 报错（尤其 OOT 段观察期不足时）。
 4. 确认结论（选 ①②③ + 最终参数集）写入 run 的 `config.json` 与 `logs/run.log`，保证可追溯。
 
 ## 3. 参数说明
@@ -150,15 +150,15 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 | `id_like_ratio` | float | `0.9` | unique / sample_total > 此值视为 ID 类;须在 (0, 1] |
 | `missing_max` | float | `1.0` | missing_rate >= 此值视为全缺失;须在 (0, 1] |
 
-**warn-and-skip 行为**:v2.1 起 boundary_filter 支持数据直算(`filter_boundary_features_from_df`, 从 train 段直接算 stats/IV, 不依赖 csv)与旧 csv 读(`filter_boundary_features`, 旧 session 兼容)两种入口;csv 缺失时对应规则打印 warning 并跳过,不阻断训练;`sample_total <= 0` 时 `id_like` 规则跳过。
+**warn-and-skip 行为**:boundary_filter 支持数据直算(`filter_boundary_features_from_df`, 从 train 段直接算 stats/IV, 不依赖 csv)与旧 csv 读(`filter_boundary_features`, 旧 session 兼容)两种入口;csv 缺失时对应规则打印 warning 并跳过,不阻断训练;`sample_total <= 0` 时 `id_like` 规则跳过。
 
 **产物落盘**:被剔除特征落 `features/used-feature-list.csv` 的 `dropped_<rule>` 行(三列 csv: feature_name / status / dropped_by_rule);`features/report.md` 含"边界特征过滤"段按规则分组展示;`config.json.runtime.boundary_filter` 含 `n_before`/`n_after`/`n_dropped`/`dropped_by_rule`/`thresholds`/`rules_enabled`/`sample_total` 摘要。
 
 ## 4. 输出产物
 
-### 4.0 产物约定（v2.1 精简规范）
+### 4.0 产物约定
 
-产物收敛为单份 `report.md`（session 根）+ 各 run 的 `_manifest.json`（断点续跑）+ 标准产物。不再产出 `deliverables.md` / 脚本快照层（v2.1 已删除 record_stage 链）。
+产物收敛为单份 `report.md`（session 根）+ 各 run 的 `_manifest.json`（断点续跑）+ 标准产物。不再产出 `deliverables.md` / 脚本快照层。
 
 **规则**：
 1. **报告以 XLSX 为主**：对外呈现统一看 `evaluation/*_eval.xlsx`（含三档指标 + 十分桶 + 特征重要性多 sheet）；`*_eval.{json,md}` 保留为内部（机器对比/断点用）。
@@ -190,7 +190,7 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 │   └── scorecard.csv (lr)         # 评分卡: [feature, bin, woe, coef, score]
 ├── evaluation/
 │   ├── _manifest.json
-│   ├── {run_name}_train_eval.json     # eval_single.py 产出(v2.1 已迁入本 skill scripts/)
+│   ├── {run_name}_train_eval.json     # eval_single.py 产出(本 skill scripts/)
 │   ├── {run_name}_train_eval.md
 │   ├── {run_name}_train_eval.xlsx
 │   ├── {run_name}_test_eval.{json,md,xlsx}
@@ -235,7 +235,7 @@ ValueError: model.run_label 非法: version 标识 'lgb-v1' 含算法/后缀保�
 ### 4.2 产物内容
 
 **评估依赖(强制)**:
-- v2.1 起评估内嵌本 skill:`eval_single.py` 已从 `classification-model-evaluation` 迁入 `scripts/`,评估报告逻辑由本 skill 承担(不再委托独立 skill)。
+- 评估内嵌本 skill:`eval_single.py` 位于 `scripts/`,评估报告逻辑由本 skill 承担。
 - predictions 阶段写完三档 parquet 后,由 `scripts/invoke/evaluation.py` 一次性把三档 predictions 转 CSV 喂给 `scripts/eval_single.py`(目录模式),产出标准化三件套(JSON + MD + XLSX)到 `evaluation/` 子目录。
 - 输出文件命名:`{run_name}_{split}_eval.{json,md,xlsx}`,split = train / test / oot / all(共 4 档);`all` 档为三档样本纵向拼接后的整体评估,由 eval_single 自动产。
 - 透传字段:`model.algo` → `--model-type`,`model.label_expr` → `--target-def`,`model.owner` → `--owner`,`model.status` → `--status`,训练实际超参 → `--hyperparams`。
@@ -274,10 +274,10 @@ version 决议规则见「3. 参数说明」末尾。
 |---|---|---|
 | `data-cleaning` | 上游 | 产 `sample.parquet` + `feature-list.csv`(本 skill 数据源) |
 | `credit-data-analysis` | 上游 | 特征分析(分月 PSI/IV/缺失率),报告供人工参考;不产 splits(切分后置) |
-| `classification-model-training`(本 skill) | **评估内嵌** | `eval_single.py`(v2.1 迁入) 产标准化三件套(JSON+MD+XLSX) |
+| `classification-model-training`(本 skill) | **评估内嵌** | `eval_single.py`(本 skill scripts/) 产标准化三件套(JSON+MD+XLSX) |
 | `classification-model-comparison` | **对比依赖(可选)** | 配置 `model.baseline_eval_dir` 时调 `compare_models.py` 做 N-way 对比,产 `comparison/` |
 | `classification-model-tuning` | 下游 | 读本 skill run 输出,做规则诊断 / Optuna 搜索后落 `-tuned` 新 run |
-| `model-evo/shared`(父目录) | 公共代码 | 跨 skill 共享的配置读写(config_io / date_utils / gen_feature_list 等) |
+| `_modelevo-shared` | 公共代码 | 跨 skill 共享的配置读写(config_io / date_utils / gen_feature_list / metrics 等) |
 
 ## 6. 执行约束
 
@@ -301,4 +301,3 @@ python -m pytest <skill_dir>/tests/ -q -m "not slow"  # 仅快测
 ---
 
 数据来源:输入 `sample.parquet` 由 `data-cleaning` skill 产出,`model.split`(train/test/oot 三档区间)为切分唯一真相,本 skill 在训练消费时即时切分(不落 session 级 `splits/`,旧 session 可读 `splits/` 兼容);baseline eval JSON 由 yaml `model.baseline_eval_dir` 显式指定;调优超参默认值见 `scripts/trainers/tune_train.py:TUNED_PARAMS`。
-最后更新:2026-08-17（v2.1：切分后置即时切分 + 评估内嵌 + 可追溯性收敛）

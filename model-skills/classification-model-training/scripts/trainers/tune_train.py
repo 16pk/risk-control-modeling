@@ -24,17 +24,18 @@ from engines._xgb._core import XgbFitter, MetricsReport  # noqa: E402
 from engines._xgb._data_utils import make_eval_pairs  # noqa: E402
 
 
-# 调优超参: 针对欠拟合加容量(depth 4->6, min_child_weight 50->20,
-# n_estimators 300->800 由 early stopping 兜底, lr 0.05->0.03)。
+# 调优超参: 针对欠拟合加容量(相对 XgbFitter 强正则基线:
+# max_depth 6->6 不变, min_child_weight 50->20, learning_rate 0.02->0.03,
+# n_estimators 由 early stopping 兜底上限 1500, subsample 0.8->0.7 降方差)。
 TUNED_PARAMS = {
     "objective": "binary:logistic",
     "eval_metric": "auc",
-    "max_depth": 5,
-    "learning_rate": 0.02,
+    "max_depth": 6,
+    "learning_rate": 0.03,
     "n_estimators": 1500,
     "subsample": 0.7,
     "colsample_bytree": 0.8,
-    "min_child_weight": 50,
+    "min_child_weight": 20,
     "reg_alpha": 0.5,
     "reg_lambda": 3.0,
     "random_state": 42,

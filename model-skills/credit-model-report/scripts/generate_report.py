@@ -13,7 +13,7 @@
 config 字段:
     csv_path        : str       # 输入 CSV
     template_path   : str       # Excel 模板路径（可选，None 则从零建）
-    out_path        : str       # 输出 Excel 路径
+    out_path        : str       # 输出 Excel 路径（缺省: CSV 同目录；CSV 在 scoring/ 子目录时落其父目录）
     model_name      : str       # 报告名（如 "V12mob4"）
     primary_label   : str       # 主标签列名（如 "dpd30_3c"）
 
@@ -130,7 +130,16 @@ def resolve_config(cfg, base_dir=None):
         raise ValueError("csv_path is required")
     if not c["out_path"]:
         import datetime
-        out_dir = base_dir or os.path.dirname(os.path.abspath(c["csv_path"]))
+        if base_dir:
+            out_dir = base_dir
+        else:
+            csv_dir = os.path.dirname(os.path.abspath(c["csv_path"]))
+            # 输入 CSV 位于 scoring/ 子目录时，报告默认落到 session 根（scoring 的父目录），
+            # 避免业务评估报告混入 scoring/ 打分产物目录
+            if os.path.basename(csv_dir) == "scoring":
+                out_dir = os.path.dirname(csv_dir)
+            else:
+                out_dir = csv_dir
         c["out_path"] = os.path.join(out_dir,
             f"{c['model_name']}评估报告_{datetime.date.today().strftime('%Y%m%d')}.xlsx")
 
@@ -772,8 +781,8 @@ def create_workbook(template_path=None):
 
 
 # ---------------------------------------------------------------- main
-def main_with_config(cfg):
-    c = resolve_config(cfg)
+def main_with_config(cfg, base_dir=None):
+    c = resolve_config(cfg, base_dir=base_dir)
     print(">>> 加载数据 ...")
     df, months, oot_months = load_data(c)
     print(f"    总去重样本: {len(df)}, 月份: {len(months)}, OOT月: {oot_months}")
@@ -867,7 +876,7 @@ def main():
     args = parser.parse_args()
     with open(args.config) as f:
         cfg = json.load(f)
-    main_with_config(cfg)
+    main_with_config(cfg, base_dir=args.dir)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ---
 name: score-to-fico
-description: 风控概率分 → FICO 标准分转换。对定版模型打分结果（含违约概率 score + 标签列）做 LR 校准 + 标准分映射，产出 FICO 量纲标准分（范围约 [400,780]，分高险低）。v2.1 起降级为**仅用户主动触发**（收口后不再默认询问），消费 model-scoring 的打分结果，默认用全量样本 + Y 标签拟合校准参数。当用户明确要求"转 FICO 分 / 要 FICO 分"时由编排层调起。
+description: 风控概率分 → FICO 标准分转换。对定版模型打分结果（含违约概率 score + 标签列）做 LR 校准 + 标准分映射，产出 FICO 量纲标准分（范围约 [400,780]，分高险低）。**仅用户主动触发**（收口后不再默认询问），消费 model-scoring 的打分结果，默认用全量样本 + Y 标签拟合校准参数。当用户明确要求"转 FICO 分 / 要 FICO 分"时由编排层调起。
 ---
 
 # 概率分 → FICO 标准分转换（score-to-fico）
@@ -12,7 +12,7 @@ description: 风控概率分 → FICO 标准分转换。对定版模型打分结
 
 | 项 | 说明 |
 |---|---|
-| 触发 | **仅用户主动触发**（明确说"转 FICO 分"），由 `classification-model-development` 编排调起；v2.1 起收口后**不再默认询问**（FICO 是业务展示层格式，非训练二分类模型的核心目标） |
+| 触发 | **仅用户主动触发**（明确说"转 FICO 分"），由 `classification-model-development` 编排调起；收口后**不再默认询问**（FICO 是业务展示层格式，非训练二分类模型的核心目标） |
 | 输入 | `model-scoring` 打分结果（`<session_dir>/scoring/score_sample.parquet`，含 `score` 概率列 + 透传的 `label` 列） |
 | 输出 | FICO 标准分产物，落 `<session_dir>/fico/` |
 | 不做 | 不再提供独立 `--fit` / `--apply` / `--from-run` 入口；不重新对原始数据推理（推理由 model-scoring 完成） |
@@ -51,21 +51,6 @@ python <skill_dir>/scripts/score_to_fico.py \
 
 - **拟合参数确认**：默认用全量样本 + `label` 列拟合校准。编排层在执行前用 `AskUserQuestion` 询问用户，允许修改**参与拟合的样本时间范围**（`--fit-date-range`）与**拟合标签**（`--fit-label-col`）；脚本本身不做 `input()` 交互，只接收已确认的参数。
 
-### 脚本快照记录(强制)
-
-`score_to_fico.py` 执行成功后,**必须**调用共享工具 `record_stage.py`,把「完整执行命令 + 入口脚本源码快照」落盘到 `<session_dir>/scripts/fico/`:
-
-```bash
-python <model-skills>/_modelevo-shared/scripts/record_stage.py \
-    --session-dir <session_dir> \
-    --stage fico \
-    --script <skill_dir>/scripts/score_to_fico.py \
-    --cmd "<上面实际执行的完整命令(含全部参数)>" \
-    [--label "FICO 转分"]
-```
-
-本 skill 仅 pipeline 内调用,统一由 `classification-model-development` Stage 6 记录(见 development SKILL.md §4.1)。
-
 ## 4. 参数说明
 
 | 参数 | 必选 | 默认值 | 说明 |
@@ -94,10 +79,10 @@ python <model-skills>/_modelevo-shared/scripts/record_stage.py \
 
 | skill / 模块 | 关系 | 说明 |
 |---|---|---|
-| `classification-model-development` | **编排调起（Stage 6，可选）** | 收口后总是询问用户是否转 FICO |
+| `classification-model-development` | **编排调起（Stage 6，可选）** | 收口后仅用户主动要求时转 FICO |
 | `model-scoring` | 上游（Stage 5） | 产 `scoring/score_sample.parquet`（本 skill 输入，含 `score` + `label`） |
-| `classification-model-evaluation` | 评估口径 | 转分后可用 `bscore` 替换 `score` 重跑评估 |
-| `classification-model-report` / `credit-model-report` | 下游可选 | FICO 产物独立落盘；报告纳入 fico 为后续版本规划（当前不消费） |
+| `classification-model-training`（内嵌评估） | 评估口径 | 转分后可用 `bscore` 替换 `score` 重跑评估 |
+| `credit-model-report` | 下游可选 | FICO 产物独立落盘；报告纳入 fico 为后续版本规划（当前不消费） |
 | `model-knowledge` | 归档 | `coef.json` + fitting-summary 随 session 归档，台账记录模型已校准参数 |
 
 ## 7. 执行约束

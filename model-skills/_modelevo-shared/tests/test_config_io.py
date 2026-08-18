@@ -159,11 +159,10 @@ def test_split_ranges_dual_format_dash():
 
 
 def test_split_ranges_dual_format_mix_overlap():
-    """混合双格式下重叠/逆序仍被拦截(归一化后比较)。"""
+    """混合双格式下重叠/逆序不再拦截(已删除时序递增强制校验)。"""
     m = _split_model()
     m["split"]["test_range"] = ["2026-04-30", "20260516"]  # 与 train 20260430 同日重叠
-    with pytest.raises(ValueError, match="重叠或逆序"):
-        validate_split_ranges(m)
+    validate_split_ranges(m)  # 不再报"重叠或逆序"
 
 
 def test_split_ranges_exceed_fetch_dt_dual_format():
@@ -184,14 +183,22 @@ def test_split_ranges_start_gt_end():
 
 @pytest.mark.parametrize("test_range", [
     ["20260420", "20260516"],   # 与 train 重叠
-    ["20260430", "20260516"],   # 与 train 同日(前档结束日=后档开始日, 视为重叠)
+    ["20260430", "20260516"],   # 与 train 同日(前档结束日=后档开始日)
 ])
-def test_split_ranges_overlap(test_range):
-    """三档重叠/同日报错(允许相邻: 前档结束日次日=后档开始日)。"""
+def test_split_ranges_overlap_no_longer_rejected(test_range):
+    """三档重叠/同日不再报错(已删除时序递增强制校验)。"""
     m = _split_model()
     m["split"]["test_range"] = test_range
-    with pytest.raises(ValueError, match="重叠或逆序"):
-        validate_split_ranges(m)
+    validate_split_ranges(m)  # 不再报"重叠或逆序"
+
+
+def test_split_ranges_reverse_order_ok():
+    """三档逆序(oot 早于 train)通过: 不强制时间递增。"""
+    m = _split_model()
+    m["split"]["train_range"] = ["20260517", "20260524"]
+    m["split"]["test_range"] = ["20260501", "20260516"]
+    m["split"]["oot_range"] = ["20260312", "20260430"]
+    validate_split_ranges(m)
 
 
 def test_split_ranges_adjacent_ok():

@@ -54,10 +54,10 @@ def _build_space_xgb(baseline_params: Dict[str, Any], ratio: float) -> Dict[str,
     return {
         "max_depth": _ri(int(baseline_params.get("max_depth", 6)), 3, 10, ratio),
         "min_child_weight": _ri(
-            int(baseline_params.get("min_child_weight", 20)), 1, 200, ratio
+            int(baseline_params.get("min_child_weight", 50)), 1, 200, ratio
         ),
         "learning_rate": _rf(
-            float(baseline_params.get("learning_rate", 0.03)), 0.005, 0.3, ratio
+            float(baseline_params.get("learning_rate", 0.02)), 0.005, 0.3, ratio
         ),
         "subsample": _rf(float(baseline_params.get("subsample", 0.8)), 0.5, 1.0, ratio),
         "colsample_bytree": _rf(

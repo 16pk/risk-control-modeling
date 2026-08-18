@@ -42,17 +42,9 @@ python <skill_dir>/scripts/aggregate_session_comparison.py \
 
 脚本扫描 `new-models/*/evaluation/` 下的 eval JSON，对 oot 和 all 两档分别调 `compare_models.py` 对比，最终合成一份 combined 输出（中间产物落临时目录自动清理）。
 
-### 2.1 降级为可选触发（v2.1）
+### 2.1 触发方式
 
 本 skill **仅用户主动要求对比时才调度**（`classification-model-development` Stage 4 决策点 D）。若由 `run_build.py` 末尾自动触发（配 `model.baseline_eval_dir`），无需额外操作。
-
-> v2.1 已删除 record_stage 脚本快照链；断点续跑由 run 的 `_manifest.json` 承担。
-    --script <skill_dir>/scripts/aggregate_session_comparison.py \
-    --cmd "<上面实际执行的完整命令(含全部参数)>" \
-    [--label "横向对比"]
-```
-
-`compare_models.py` 单次对比(手动指定 JSON 列表)同理由编排方或本 skill 按上述模板记录(`--stage comparison`)。
 
 ## 3. 参数说明
 

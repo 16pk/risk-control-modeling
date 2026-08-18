@@ -5,9 +5,9 @@ description: 建模 pipeline 内部的定版模型打分环节，位于模型定
 
 # model-scoring
 
-建模 pipeline 中「定版模型 → 打分」的**唯一推理环节**，位于 `classification-model-development` 的 **Stage 6**（v2.1 起默认执行，不再"总是询问"），承接收口确认的定版模型（`finalized_model.json`），对清洗后数据跑推理产出违约概率分 `score`，供下游 `score-to-fico`（用户主动触发时）拟合校准转 FICO。
+建模 pipeline 中「定版模型 → 打分」的**唯一推理环节**，位于 `classification-model-development` 的 **Stage 6**（收口后默认执行，用户可叫停），承接收口确认的定版模型（`finalized_model.json`），对清洗后数据跑推理产出违约概率分 `score`，供下游 `score-to-fico`（用户主动触发时）拟合校准转 FICO。
 
-> ⚠️ **触发定位**：v2.1 起收口后**默认执行**（用户可叫停），由 `classification-model-development` Stage 6 编排调起；不设独立触发词。
+> ⚠️ **触发定位**：收口后**默认执行**（用户可叫停），由 `classification-model-development` Stage 6 编排调起；不设独立触发词。
 
 ## 1. 职责边界
 
@@ -81,7 +81,7 @@ python <skill_dir>/scripts/mark_finalized.py \
 | `data-cleaning` | 上游 | 产 `sample-features/data-cleaning/sample.parquet`（本 skill 输入） |
 | `classification-model-training` | 上游 | 产 `new-models/{run}/model/`（定版模型 + `model_meta.json`） |
 | `score-to-fico` | 下游（可选） | 用户主动触发时消费本 skill 打分结果（含 label + score），拟合校准转 FICO |
-| `_modelevo-shared` | 依赖 | 共享 metrics（打分评估用）；record_stage 链已删除 |
+| `_modelevo-shared` | 依赖 | 共享 metrics（打分评估用） |
 
 ## 8. 执行约束
 

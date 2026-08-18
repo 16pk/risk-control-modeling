@@ -10,7 +10,7 @@ description: 对 classification-model-training 的 baseline run 做超参调优�
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
 | `baseline_run` | ✅ | 上游 `classification-model-training` 产物 | baseline run 目录（如 `<session_dir>/new-models/xgb-v1`）；从其 `config.json` 恢复 cfg / data_path / algo / used_params / metrics / best_iteration |
-| `analysis_dir` | 兼容保留 | （v2.1 已不使用） | 原 `feature-analysis` csv 目录；select_features 已改为**数据直算**（读 baseline 的 train/oot parquet），不再依赖 csv |
+| `analysis_dir` | 兼容保留 | （已不使用） | 历史遗留参数；select_features 改为**数据直算**（读 baseline 的 train/oot parquet），不再依赖 csv |
 | baseline 的 data_path | ✅ | baseline `config.json` 记录 | train/test/oot 三档 parquet 必须可访问 |
 | `session_dir` | 否 | 从 `baseline_run` 推断（parent.parent） | 输出根目录；可用 `--output_dir` 显式覆盖 |
 | Optuna 包 | 否 | `pip install --user "optuna<4"` | 仅 `--method optuna` 需要 |
@@ -94,7 +94,7 @@ python <skill_dir>/scripts/run_tuning.py \
 ### 2.2 流程 B：特征筛选（select_features.py）
 
 ```bash
-# v2.1: select_features 改为数据直算(读 baseline 的 train/oot parquet), 无需上游 csv
+# select_features 数据直算(读 baseline 的 train/oot parquet), 无需上游 csv
 
 python <skill_dir>/scripts/select_features.py \
     --baseline_run <session_dir>/new-models/xgb-v1 \
@@ -119,13 +119,11 @@ python <skill_dir>/scripts/select_features.py \
    | `low_iv` | `iv_table.csv.iv` | `< iv_threshold` 或 IV=NaN | 0.02 |
    | `high_missing` | 数据直算 `missing_rate` | `> missing_threshold` | 0.95 |
 
-   v2.1 起改为**数据直算**：`select_features.py` 读 baseline 的 train/oot parquet，用共享 `metrics.py` 直接计算 stats/IV/PSI（不再读 feature-analysis csv）；缺 IV（无 target）或 PSI（无 oot）数据时对应规则跳过
+   **数据直算**：`select_features.py` 读 baseline 的 train/oot parquet，用共享 `metrics.py` 直接计算 stats/IV/PSI（无需上游 csv）；缺 IV（无 target）或 PSI（无 oot）数据时对应规则跳过
 3-bis. **importance 截断（可选 `--importance-gain-pct`）**：读 baseline run `explainability/feature-importance-total_gain.csv`（或 `feature-importance.csv`，gain 列识别优先级 total_gain > importance_gain > gain），按 total_gain 累积贡献截断到 pct%（如 95=保留贡献前 95% 的特征），**与规则筛选结果取交集**。找不到重要性文件或 gain 列时打 warn 跳过（不阻断）
 4. **打印剔除明细**（分规则列出 + 总数），要 `[Y/n]` 确认（`--auto-apply` 跳过）
 5. **重训**：用 baseline 的 `used_params`（不调参） + 筛选后的特征集训练，落八阶段产物
 6. `config.json.runtime` 含 `baseline_run / selection {kept/dropped/dropped_by_rule/thresholds/rules_enabled} / analysis_dir(=None) / final_params / baseline_metrics`
-
-> v2.1 已删除 record_stage 脚本快照链（`<session_dir>/scripts/` 不再记录）；断点续跑由 run 的 `_manifest.json` 承担。
 
 ## 3. 参数说明
 
@@ -146,7 +144,7 @@ python <skill_dir>/scripts/select_features.py \
 | 参数 | 必选 | 默认值 | 说明 |
 |---|:---:|---|---|
 | `--baseline_run` | ✅ | - | `classification-model-training` 产出的 baseline run 目录 |
-| `--analysis_dir` | 否 | `None` | （兼容保留，已不使用）原 `feature-analysis` 输出目录 |
+| `--analysis_dir` | 否 | `None` | （兼容保留，已不使用） |
 | `--version` | 否 | `None` | 新 run 显式版本号（仅纯版本号：`v1` / `v2` / `custom-tag`；**不要带 algo/suffix 前缀**如 `xgb-v1` / `feat-v1` / `tuned`，会被拦截报错，避免产出 `xgb-feat-feat-v1` 重复前缀目录）；留空自动自增（xgb-feat-v1, v2, ...）；与 `--label` 都传时 `--version` 优先 |
 | `--label` | 否 | `None` | `--version` 的别名 |
 | `--output_dir` | 否 | 从 baseline 推断 | 输出根目录；默认 `baseline_run` 的 parent.parent（即 session_dir） |
@@ -196,7 +194,7 @@ python <skill_dir>/scripts/select_features.py \
 | `model/model.json\|.pkl` | ✅ | 模型文件，扩展名按 algo（xgb→json，dnn/lr→pkl） |
 | `model/model_meta.json` | ✅ | dnn / lr 必有（algo=xgb 时由 xgb 引擎自身落盘）。结构 `{algo, feature_names, feature_importance, train_info, params, created_at}` |
 | `model/scorecard.csv` | 条件生成 | 仅 `algo=lr` 且 predictor 持有 `scorecard_df` 时落盘；列 `[feature, bin, woe, coef, score]`，`model/_manifest.json` 标 `has_scorecard=True` |
-| `evaluation/{run_name}_{split}_eval.{json,md,xlsx}` | ✅ | 三档标准化三件套，委托 `classification-model-evaluation` 产出（本 skill 不自带评估报告逻辑）；predictions 阶段写完三档 parquet 后由 `invoke_evaluation.py` 对每档分别调 `classification-model-evaluation/scripts/eval_single.py` |
+| `evaluation/{run_name}_{split}_eval.{json,md,xlsx}` | ✅ | 三档标准化三件套，委托 `classification-model-training` 内嵌评估产出（本 skill 不自带评估报告逻辑）；predictions 阶段写完三档 parquet 后由 `invoke/evaluation.py` 对每档分别调 `eval_single.py` |
 | `predictions/*.parquet` + `report.md` | ✅ | 三档分档预测明细 |
 | `explainability/feature-importance.csv` | ✅ | 特征重要性；`shap-summary.csv` 仅 xgb |
 | `comparison/comparison_{split}.{json,md,xlsx}` | ✅ | 评估完成后自动链式调用 `classification-model-comparison`，以调优/筛选所基于的 baseline run 的 `evaluation/` 目录（`snap.run_dir / "evaluation"`）为对比基准，对 train/test/oot 三档做 N-way 对比；未配置 baseline_eval_dir 或某 split 缺 JSON 时跳过，不影响主流程 |
@@ -211,8 +209,8 @@ python <skill_dir>/scripts/select_features.py \
 | 上下游 | Skill | 关系 |
 |---|---|---|
 | 上游 | `classification-model-training` | 必须先有其产出的 baseline run 才能调优/筛选；读其 `config.json` 恢复完整 cfg。与 training 的区别：training 做边界安全过滤(剔除危险特征)产 baseline(suffix 为空),本 skill 在其基础上做优化筛选/调参,产 `-tuned` / `-feat` 新 run |
-| 上游 | `credit-data-analysis` | （原 feature-analysis 职责）分月 PSI/IV 体检报告；select_features v2.1 已改为数据直算，不强制消费其 csv |
-| 下游 | `classification-model-training`（内含 evaluation） | 评估依赖：`eval_single.py` 已迁入 training/scripts/，评估委托 training 的 `invoke/evaluation.py` 产出标准化三件套到 `evaluation/` |
+| 上游 | `credit-data-analysis` | 分月 PSI/IV 体检报告（供人工参考）；select_features 数据直算，不强制消费其 csv |
+| 下游 | `classification-model-training`（内含 evaluation） | 评估依赖：`eval_single.py` 位于 training/scripts/，评估委托 training 的 `invoke/evaluation.py` 产出标准化三件套到 `evaluation/` |
 | 下游 | `classification-model-comparison` | 对比依赖（强制链式）：评估完成后自动以 baseline run 的 `evaluation/` 目录为基准，调其 `compare_models.py` 与新 run 做 N-way 对比，产 `comparison/` 子目录 |
 
 ## 6. 执行约束
@@ -238,5 +236,4 @@ python -m pytest <skill_dir>/tests/ -q -m "not slow"    # 仅快测
 
 ---
 
-数据来源：baseline run 来自 `classification-model-training` 产出的 `<session_dir>/new-models/{algo}-v{N}/`；特征分析报告来自 `credit-data-analysis` 产出的 `<session_dir>/sample-features/credit-data-analysis/`（select_features v2.1 数据直算，不读 csv）。
-最后更新：2026-08-17
+数据来源：baseline run 来自 `classification-model-training` 产出的 `<session_dir>/new-models/{algo}-v{N}/`；特征分析报告来自 `credit-data-analysis` 产出的 `<session_dir>/sample-features/credit-data-analysis/`（select_features 数据直算，不读 csv）。

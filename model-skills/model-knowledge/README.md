@@ -7,7 +7,7 @@
 | 知识域 | 入口文件 | 说明 | 加载时机 |
 |---|---|---|---|
 | 业务领域知识 | `assets/business-domain-knowledge/business-domain-knowledge.md` | 业务字段语义、客群标签、用户状态、常用分析指标 | 建模任务启动时默认加载 |
-| 特征知识 | `assets/feature-knowledge/feature-knowledge.md` | 各业务域特征宽表与特征清单（`feature-list/*.csv`） | `data-cleaning` / `feature-analysis` 选特征时 |
+| 特征知识 | `assets/feature-knowledge/feature-knowledge.md` | 各业务域特征宽表与特征清单（`feature-list/*.csv`） | `data-cleaning` / `credit-data-analysis` 选特征时 |
 | 历史模型知识 | `assets/historical-model-knowledge/historical-model-knowledge.md` | 模型台账 `model_catalog.csv` + 模型报告 `reports/` | 建模时检索历史模型复用 / 归档时更新 |
 | 建模经验知识 | `assets/modeling-experience-knowledge/modeling-experience-knowledge.md` | 方法论、调参经验、踩坑记录（EXP-G / EXP-C） | training / tuning 阶段参考；建模完成后归档 |
 
@@ -58,7 +58,7 @@ model-knowledge/
 ## 关联 skill
 
 - 上游（归档来源）：`classification-model-development` / `classification-model-comparison`
-- 下游（检索复用）：`model-task-routing`、`classification-model-task-spec`、`data-cleaning`、`feature-analysis`
+- 下游（检索复用）：`classification-model-task-spec`、`data-cleaning`、`credit-data-analysis`
 
 ---
 
@@ -102,7 +102,7 @@ model-knowledge/
 
 ### 第 6 步：验证
 
-发起一次真实建模任务（走 `model-task-routing` 入口），确认：业务字段能被正确解读、特征表能被 `data-cleaning` 定位、能从台账筛出候选模型。
+发起一次真实建模任务（走 `classification-model-development` 入口），确认：业务字段能被正确解读、特征表能被 `data-cleaning` 定位、能从台账筛出候选模型。
 
 ### 公司初次接入 Checklist
 

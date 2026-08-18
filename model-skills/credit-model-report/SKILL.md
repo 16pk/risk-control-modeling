@@ -1,6 +1,6 @@
 ---
 name: credit-model-report
-description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。v2.1 起**移出建模主流程**：仅用户主动要求业务评估报告时触发（"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板"）。标准化指标三件套（AUC/KS/分桶排序性）由 classification-model-training 内嵌的 eval_single.py 产出。
+description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。**移出建模主流程**：仅用户主动要求业务评估报告时触发（"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板"）。标准化指标三件套（AUC/KS/分桶排序性）由 classification-model-training 内嵌的 eval_single.py 产出。
 compatibility: python3, pandas, openpyxl, numpy
 ---
 
@@ -8,7 +8,7 @@ compatibility: python3, pandas, openpyxl, numpy
 
 从模型打分 CSV 文件生成完整的 Excel 评估报告，包含回溯表、建模信息、KS、特征重要性、模型效果（Lift + SWAP）、打分分布（PSI + 分桶 + 分段逾期率）共 6 个 sheet。
 
-## 定位与分工（v2.1 更新）
+## 定位与分工
 
 | | credit-model-report（本 skill） | classification-model-training 内嵌评估 |
 |---|---|---|
@@ -83,10 +83,15 @@ compatibility: python3, pandas, openpyxl, numpy
 
 ### Step 3: 复制脚本和模板
 
-将 skill 自带的脚本和模板复制到工作目录：
+将 skill 自带的脚本和模板复制到**输出目录**。`WORK_DIR` 即报告输出目录（也是脚本工作目录）：
+
+- **建模 session 内**：`WORK_DIR=<session_dir>/model-report`（先 `mkdir -p`），与 `scoring/`、`fico/` 平级。**严禁把 xlsx 报告输出到 `<session_dir>/scoring/` 子目录**。
+- **独立使用**：`WORK_DIR=<用户数据文件所在目录>`。
 
 ```bash
-WORK_DIR="<用户数据文件所在目录>"
+WORK_DIR="<session_dir>/model-report"     # 建模 session 内
+# WORK_DIR="<用户数据文件所在目录>"         # 独立使用
+mkdir -p "$WORK_DIR"
 cp "<skill_dir>/scripts/generate_report.py" "$WORK_DIR/"
 cp "<skill_dir>/scripts/metric.py" "$WORK_DIR/"
 cp "<skill_dir>/assets/模型报告模板.xlsx" "$WORK_DIR/" 2>/dev/null || true
@@ -120,15 +125,16 @@ cat > "$WORK_DIR/config.json" <<'JSON'
   "swap_bins": 5
 }
 JSON
-cd "$WORK_DIR" && python3 generate_report.py config.json
+cd "$WORK_DIR" && python3 generate_report.py config.json --dir "$WORK_DIR"
 ```
 
 也可不落盘 config，直接在 Python 中调用 `main_with_config(config_dict)`（脚本会自动校验列名、补全 OOT/训练集切分等默认值）。两种方式等价。
+**输出目录**：命令行用 `--dir <目录>`、Python 调用用 `main_with_config(config_dict, base_dir=<目录>)` 显式指定 xlsx 输出目录；config 里也可直接给 `out_path` 全路径。三者均未给时，脚本默认输出到 CSV 同目录（若 CSV 在 `scoring/` 子目录，则自动落到其父目录，即 session 根）。
 - **CSV 列名校验**：`uid_col` / `date_col` / 各模型评分列 / 所有标签列 / `filter_conds` 列必须在 CSV 中存在，否则脚本报错列出可用列。
 
 ### Step 5: 报告输出
 
-脚本输出 Excel 文件到同目录，文件名格式 `{model_name}评估报告_YYYYMMDD.xlsx`。自检打印包含：
+脚本输出 Excel 文件到 `--dir` / `out_path` 指定目录（缺省规则见 Step 4），文件名格式 `{model_name}评估报告_YYYYMMDD.xlsx`。**建模 session 内 xlsx 必须落在 `<session_dir>/model-report/`，不得落在 `scoring/` 子目录**。自检打印包含：
 - OOT 合并各模型各标签 KS
 - Lift 汇总样本数和逾期率
 - SWAP 样本数
@@ -167,15 +173,14 @@ cd "$WORK_DIR" && python3 generate_report.py config.json
 └── 模型报告模板.xlsx                     # 模板（若用户目录已有则用用户的）
 ```
 
-> 若在建模 session 内使用，建议产物落 `<session_dir>/model-report/`；独立使用时落用户数据目录即可。
+> **产物目录约定（硬性）**：建模 session 内，xlsx 报告一律落 `<session_dir>/model-report/`（与 `scoring/`、`fico/` 平级），**严禁落到 `<session_dir>/scoring/` 子目录**；独立使用时落用户数据目录即可。
 
 ## 与其他 skill 的关联
 
 | 上下游 | Skill | 关系 |
 |---|---|---|
-| 平行 | `classification-model-evaluation` | 分工不重叠：evaluation 出标准化指标三件套（pipeline 内），本 skill 出业务模板报告（回溯表/Lift/SWAP/打分分布） |
+| 平行 | `classification-model-training`（内嵌评估） | 分工不重叠：training 内嵌 eval_single 出标准化指标三件套（pipeline 内），本 skill 出业务模板报告（回溯表/Lift/SWAP/打分分布） |
 | 平行 | `classification-model-comparison` | comparison 做多模型指标横向对比，本 skill 做新旧模型 SWAP 迁移 + 业务报告 |
-| 平行 | `classification-model-report` | report 聚合 session 建模信息，本 skill 独立评估打分 CSV 产出业务报告 |
 | 独立 | 无强制依赖 | 纯 pandas / numpy / openpyxl，不依赖 `_modelevo-shared` / Spark |
 
 ## 执行约束

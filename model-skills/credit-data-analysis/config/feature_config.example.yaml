@@ -22,7 +22,8 @@ model:
   # 校验规则 (与 model_training 共用 config_io.validate_split_ranges):
   #   - 三档齐全 (train/test/oot_range 缺一报错)
   #   - 每档 [起, 止] 为 8 位 YYYYMMDD 且起 ≤ 止
-  #   - 三档时序递增 train<test<oot (允许相邻, 间隔≥1天)
+  #   - 三档并集 ⊆ fetch_dt (若有, 划分范围不得超出取数窗口)
+  #   - 不强制三档时间递增(时序排布由业务侧保证)
   split:
     train_range: ["20260312", "20260430"]
     test_range:  ["20260501", "20260516"]

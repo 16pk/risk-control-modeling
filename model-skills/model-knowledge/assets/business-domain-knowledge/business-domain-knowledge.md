@@ -1,6 +1,6 @@
 # 公司的业务领域知识
 
-为建模流程提供必要的业务字段知识。下游 skill（classification-model-task-spec / data-cleaning / feature-analysis 等）在解析样本表、特征宽表、模型台账时，可参考本文件理解字段语义。
+为建模流程提供必要的业务字段知识。下游 skill（classification-model-task-spec / data-cleaning / credit-data-analysis 等）在解析样本表、特征宽表、模型台账时，可参考本文件理解字段语义。
 
 本文档做路由。
 

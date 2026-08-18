@@ -35,7 +35,6 @@
 | EXP-G-001 | 样本时间窗与 OOT 切分 | 通用 |
 | EXP-G-002 | 高 PSI 特征处理 | 通用 |
 | EXP-G-003 | 基线先行，逐步加复杂度 | 通用 |
-| EXP-G-004 | 执行引擎裁决规则：Hive <1GB 走本地、≥1GB 走 ray-distributed-train 并跳过 Stage0 本地特征分析 | 通用 |
 
 ## 通用经验条目
 
@@ -53,21 +52,6 @@
 - 任务类型：通用｜业务域：通用（种子条目）
 - 关联模型：—｜关联 session：—
 - 背景：部分特征在 train 与 OOT 之间分布漂移大，模型分随时间不稳定。
-- 做法：feature-analysis 阶段计算特征 PSI，PSI > 0.1 的特征标注 `[PSI_WARN]`；重要性高且 PSI 高的特征做剔除前后对比实验。
+- 做法：credit-data-analysis 阶段计算特征 PSI，PSI > 0.1 的特征标注 `[PSI_WARN]`；重要性高且 PSI 高的特征做剔除前后对比实验。
 - 结论：剔除高 PSI 特征通常小幅牺牲 train 指标，换取 OOT 稳定性提升。
 - 教训/建议：不要只看单点指标决定去留，结合模型分 PSI 与分档单调性判断；报告中保留剔除清单。
-
-
-### EXP-G-004｜执行引擎裁决规则：Hive <1GB 走本地、≥1GB 走 ray-distributed-train（跳过 Stage0 本地特征分析）
-- 日期：2026-08-05
-- 任务类型：通用｜业务域：信贷风控-贷中逾期（xj_dz_pd_mob12）
-- 关联模型：xj_dz_pd_lightgbm_v1｜关联 session：20260805-194322-xj_dz_pd_mob12
-- 背景：3600万行×448列的 Hive 宽表按常规单机流程取数+训练会拖垮内存并导致重复搬运；此前曾出现「已经进入单机流程后才发现该用分布式」的返工。经用户定夺确立铁律级路由门槛。
-- 做法（唯一权威规则）：
-  ① 若 hive 表数据量 **<1GB** → 拉取到本地，走本地训练流程（含本地 feature-analysis）；
-  ② 若 **≥1GB** → 直接走**分布式训练分支**（ray-lightgbm / xgboost GPU），**同时跳过 Stage0 本地特征分析报告**；
-  ③ 分布式平台上做特征分析的功能**留待未来开发**，不临时在集群上补写脚本。
-- 判定必须在**取数落盘之前**完成（Gate P0 前置）：先量化窗口体量（行列×字节、parquet 压缩估、DF 载入内存估），再按阈值落子；裁决结果写入 task-spec §0 存档可追溯。
-- 结论：本 run 实测窗口 parquet ≈14–18GB ≥1GB → 判分布式；远端成功产 baseline（train AUC .6599 / val .6591 / OOT .6544）。
-- 教训/建议：① 大表勿默认进单机 pipeline；把路由决策前移到任务规格阶段并在 task-spec 固化；② 显式关闭本地 splits 产出以避免无谓消耗；③ 候选特征清单仍作为 keep_cols 白名单参考下发，泄漏红线(IV>1.0)改为事后监控兜底。
-- 2026-08 起固化为代码+编排双层：`config_io.py.estimate_size_bytes / route_by_bytes(LOCAL_BYTES_LIMIT=1GB, BYTES_ROUTING_SCHEMA_VERSION=1)` 单一真相 + task-spec §3.5.1 Gate P0（SHOW PARTITIONS/DESCRIBE FORMATTED totalSize 测窗 → engine.ruling 落 manifest）；feature-analysis/training/tuning 只读不重判；R×C 元素数口径彻底废弃。

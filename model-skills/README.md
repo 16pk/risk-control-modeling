@@ -1,6 +1,6 @@
 # Model Skills
 
-业务建模全流程 Skill 集合。v2.0 精简后，编排层由三层合并为一层：`classification-model-development` 是唯一调度者，从需求澄清到收口打分的整个主链路都由其编排。所有 Skill 遵循统一的命名约定与产物规范。
+业务建模全流程 Skill 集合。`classification-model-development` 是唯一调度者，从需求澄清到收口打分的整个主链路都由其编排。所有 Skill 遵循统一的命名约定与产物规范。
 
 > 每个 Skill 位于独立目录下的 `SKILL.md`，包含 frontmatter（`name` + `description`）与正文（输入依赖 / 执行命令 / 参数说明 / 输出产物 / 关联 skill / 执行约束 / 异常处理）。
 
@@ -132,7 +132,7 @@ runs/20260624-114630-draw_willingness/
     └── fitting-summary.{json,md}          # 拟合方案
 ```
 
-> v2.0 已删除：`splits/{train,test,oot}.parquet`（session 级）、`feature-analysis/`、`scripts/` 快照层、`deliverables.md`。
+> 可追溯性由 `_manifest.json` + `report.md` 承担；session 级产物只含上述目录，不再产出 session 级 `splits/`、`feature-analysis/`、`scripts/` 快照层、`deliverables.md`。
 
 ## 命名约定
 
@@ -153,9 +153,9 @@ runs/20260624-114630-draw_willingness/
 | `_modelevo-shared/scripts/config_io.py` | yaml 配置读写 + 必填校验 + 数据安全红线（`load_config` / `validate_common` / `check_sensitive`，命中身份证/手机号即抛错） |
 | `_modelevo-shared/scripts/date_utils.py` | 日期归一化工具（YYYY-MM-DD / YYYYMMDD 双兼容，`parse_date` / `parse_date_pair` / `month_prefix` / `shift_days` 等） |
 | `_modelevo-shared/scripts/gen_feature_list.py` | 特征清单加载/识别（`.csv` 取 `feature_name` 列 / `.txt` 按行 / 跳过注释 / 去重保序） |
-| `_modelevo-shared/scripts/metrics.py` | **统一指标库（v2.0 新增）**：AUC / KS / Gini / PSI / IV / 分类指标 / 分桶排序性，各 skill 经 `_bootstrap.py` 复用 |
+| `_modelevo-shared/scripts/metrics.py` | **统一指标库**：AUC / KS / Gini / PSI / IV / 分类指标 / 分桶排序性，各 skill 经 `_bootstrap.py` 复用 |
 | `_modelevo-shared/scripts/feature_knowledge.py` | 特征清单索引解析（按 feature_table / business_domain 从 feature-knowledge.md 匹配） |
-| `_modelevo-shared/scripts/record_stage.py` | （保留文件，v2.0 起不再被编排调用；可追溯性收敛为 `_manifest.json` + `report.md`） |
+| `_modelevo-shared/scripts/record_stage.py` | （保留文件，不再被编排调用；可追溯性收敛为 `_manifest.json` + `report.md`） |
 | `_modelevo-shared/tests/` | 公共代码单元测试 |
 
 ## 扩展指南
@@ -168,8 +168,8 @@ runs/20260624-114630-draw_willingness/
 2. **登记点（缺一不可）**：
    - `.codebuddy-plugin/plugin.json` 的 `skills` 数组（新增后须重新校验 + 注册）
    - 本 README 的「Skill 清单」表格（含触发词示例）
-   - `agents/risk-control-modeling.md` 的「可调用的建模技能」章节
-   - 涉及关键决策的 skill 须声明走「关键决策确认门禁」对应节点
+   - `agents/risk-control-modeling.md` 的「技能-职责映射表」章节
+   - 涉及关键决策的 skill 须声明走 `classification-model-development` 的「决策点话术（门禁收敛）」对应节点
 3. **命名约定**：classification 专属加 `classification-` 前缀、跨流程共享不加前缀
 4. **公共代码**：优先复用 `_modelevo-shared`（config_io 配置读写 + 数据安全红线 + metrics 统一指标），不重复造轮子
 5. **校验 + 注册**：用平台 **expert-manager** 插件脚本 `validate_expert.py` → `register_expert.py`（位于 `~/.workbuddy/plugins/marketplaces/workbuddy-builtin/skills/expert-manager/scripts/`），禁止直接改 `marketplace.json`
@@ -182,7 +182,7 @@ runs/20260624-114630-draw_willingness/
 
 ### 关键决策确认门禁
 
-所有 skill 执行过程中，凡影响建模结论的决策（预测目标、切分窗口、超参数）必须**先给方案、等用户确认、再执行**；默认值及门禁节点定义见 `agents/risk-control-modeling.md` 的「关键决策确认门禁」章节。
+所有 skill 执行过程中，凡影响建模结论的决策（预测目标、切分窗口、超参数）必须**先给方案、等用户确认、再执行**；默认值及门禁节点定义见 `classification-model-development` SKILL.md 的「决策点话术（门禁收敛）」章节。
 
 ## 关键约束
 

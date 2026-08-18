@@ -14,10 +14,10 @@ description: 信贷特征分析 skill，双模式：①独立数据体检（用�
 | 独立体检 | 用户主动发起样本/特征分析、数据体检、分月监控 | 分月矩阵（PSI=基准月对比各月，IV=分月） | 用户指定 `--base-month` | 11-sheet Excel + md + `_manifest.json` |
 | pipeline（development Stage 0） | 建模流程内部特征分析，由 `classification-model-development` 编排调起 | 分月矩阵（PSI=基准月对比各月，IV=分月） | **默认取第一个 OOT 月**（读 `--split-config` 的 `model.split.oot_range` 首月，**须用户确认**，`--base-month` 可覆盖） | Excel + md + `_manifest.json` |
 
-> **职责边界（v2.1 精简重构）**：
+> **职责边界**：
 > - **不做三档切分**：train/test/oot 切分后置到 training/tuning/evaluation 消费时即时进行（复用 training 的 `prepare_splits`），本 skill **不产 `splits/{train,test,oot}.parquet`**。
 > - **不产 IV/PSI 筛选 csv**：训练过程不通过 IV/PSI 指标筛选特征，本 skill 只做体检报告。
-> - 本 skill 承接原 `feature-analysis` 的建模 pipeline 特征分析角色（Stage 0），`feature-analysis` 已删除。
+> - 本 skill 承担建模 pipeline 特征分析角色（Stage 0）。
 
 ## 1. 输入依赖
 
@@ -55,7 +55,7 @@ python <skill_dir>/scripts/feature_analysis.py \
   --feature-start <首特征> --feature-end <末特征> \
   --iv-label <label_col> \
   --time-col <dt_col> \
-  --split-config <session_dir>/sample-features/feature-analysis/feature_config.yaml \
+  --split-config <session_dir>/sample-features/feature_config.yaml \
   --base-month <YYYY-MM>   # 可选；缺省时从 split_config 推导第一个 OOT 月
   [--output-dir <session_dir>/sample-features/credit-data-analysis/]
 ```
@@ -91,7 +91,7 @@ python <skill_dir>/scripts/feature_analysis.py \
 
 ## 4. 输出产物
 
-主交付为 Excel（11-sheet：样本分布 + 特征分布 + 6 张分月表 + PSI + IV + 无效值检查）+ **Markdown 报告**（v2.1 新增，与 Excel 同源），同目录另落 `_manifest.json`（参数溯源）：
+主交付为 Excel（11-sheet：样本分布 + 特征分布 + 6 张分月表 + PSI + IV + 无效值检查）+ **Markdown 报告**（与 Excel 同源），同目录另落 `_manifest.json`（参数溯源）：
 
 ```text
 <output-dir>/

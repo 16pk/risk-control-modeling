@@ -29,16 +29,20 @@ LABEL = "dpd30_3c"
 DT = "fsx_time"
 ID = "fuid"
 
+# 默认基线对齐框架树模型权威表(见 SKILL.md §2.5 超参数确认表):
+# max_depth=6 / learning_rate=0.02 / n_estimators=300 / subsample=0.8 /
+# colsample_bytree=0.8 / min_child_samples(≈min_child_weight)=50 /
+# reg_alpha=0.1 / reg_lambda=1.0 / random_state=42。
 DEFAULT_PARAMS = {
     "objective": "binary",
     "metric": "auc",
     "num_leaves": 31,
     "max_depth": 6,
     "learning_rate": 0.02,
-    "n_estimators": 500,
+    "n_estimators": 300,
     "subsample": 0.8,
-    "colsample_bytree": 0.15,
-    "min_child_samples": 20,
+    "colsample_bytree": 0.8,
+    "min_child_samples": 50,
     "reg_alpha": 0.1,
     "reg_lambda": 1.0,
     "random_state": 42,

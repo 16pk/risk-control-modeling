@@ -1,4 +1,4 @@
-# task-spec.md 4 段式需求规格文档模板（v2.1 精简版）
+# task-spec.md 4 段式需求规格文档模板
 
 > 本文件从 `classification-model-task-spec/SKILL.md` 抽出，包含 task-spec.md 的完整 4 段式模板（建模目标 / 核心参数 / 样本数据 / 待处理项）。
 
@@ -33,7 +33,7 @@
 | Test | | |
 | OOT | | |
 
-> 切分方式：按时间顺序，OOT 严格晚于训练窗；train/test 开发集可随机切分（记录 seed，val 偏乐观以 OOT 为裁决）。
+> 切分方式：三档区间不强制时间递增（时序排布由业务侧保证）；train/test 开发集可随机切分（记录 seed，val 偏乐观以 OOT 为裁决）。
 > 切分在 training/tuning/evaluation 消费时即时进行，不落盘 splits。
 
 ## 四、待处理项

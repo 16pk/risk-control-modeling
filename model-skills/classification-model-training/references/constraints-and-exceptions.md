@@ -4,27 +4,27 @@
 
 ## 1. 覆盖范围
 
-基于 `splits/{train,test,oot}.parquet` 训练 xgboost/dnn/lr 二分类模型,落盘八阶段产物(features/model/evaluation/predictions/explainability/comparison/logs/config);评估委托 `classification-model-evaluation`,对比委托 `classification-model-comparison`;单 run 顶层 `report.md` 整合报告。
+基于 `data-cleaning` 产出的 `sample.parquet` + `model.split` 训练 xgboost/dnn/lr 二分类模型(在训练消费时即时切分三档,写 run 内部 `data/splits/` 临时目录),落盘八阶段产物(features/model/evaluation/predictions/explainability/comparison/logs/config);评估内嵌本 skill,对比委托 `classification-model-comparison`;单 run 顶层 `report.md` 整合报告。
 
 ## 2. 不覆盖(由其他 skill 负责)
 
 - **清洗**:用 `data-cleaning`(产清洗后 sample.parquet)
-- **切分**:用 `feature-analysis`(按 `model.split` 切 train/test/oot,产 `splits/{train,test,oot}.parquet`)
-- **特征分析**:IV/PSI/相关性用 `feature-analysis`,报告仅作人工参考
+- **切分**:本 skill 消费时按 `model.split` 即时切分,不依赖上游产 splits
+- **特征分析**:IV/PSI/相关性用 `credit-data-analysis`,报告仅作人工参考
 - **特征筛选/调参**:用 `classification-model-tuning`(产 `-feat` / `-tuned` 新 run)
 - **会话级横向对比聚合**:用 `classification-model-comparison`
 
 ## 3. 何时用
 
-当用户用一份训练数据训练一个新模型时使用;上游建模前的特征分析与切分请走 `feature-analysis` skill。
+当用户用一份训练数据训练一个新模型时使用;上游建模前的特征分析请走 `credit-data-analysis` skill。
 
 ## 4. Session 决议(本 skill 不负责)
 
-`session_dir` 由上游 `classification-model-development` / `classification-model-orchestration` 传入;无 session 上下文时由调用方先跑 `classification-model-development/scripts/list_sessions.py` 列历史 sessions 并询问用户,本 skill 直接消费 `--output_dir`。
+`session_dir` 由上游 `classification-model-development` 传入;无 session 上下文时由调用方先跑 `classification-model-development/scripts/list_sessions.py` 列历史 sessions 并询问用户,本 skill 直接消费 `--output_dir`。
 
 ## 5. 迭代报告
 
-每次 run 的顶层整合报告落 `<session_dir>/new-models/{algo}[-suffix]-v{N}/report.md`,session 级项目总报告由 orchestration 侧的 `fill_report.py` 回填到 `<session_dir>/report.md`(见根目录 CLAUDE.md 会话与输出收口约定)。
+每次 run 的顶层整合报告落 `<session_dir>/new-models/{algo}[-suffix]-v{N}/report.md`,session 级项目总报告由 `classification-model-development` 侧的 `fill_report.py` 回填到 `<session_dir>/report.md`。
 
 ## 6. 输入 yaml 落盘约束(强制)
 
@@ -49,7 +49,7 @@
 
 | 异常 | 处理方式 |
 |---|---|
-| 未传 `--data_dir` 且默认路径 `<output_dir>/sample-features/splits/train.parquet` 不存在 | 停止执行,提示先跑 `feature-analysis` 切分 `splits/{train,test,oot}.parquet` 或显式传 `--data_dir` |
+| 未传 `--data_dir` 且默认路径 `<output_dir>/sample-features/data-cleaning/sample.parquet` 不存在 | 停止执行,提示先跑 `data-cleaning` 或显式传 `--data_dir` |
 | 配置 yaml 校验失败(`validate_config`) | 停止执行,按报错修正 yaml |
 | `model.baseline_eval_dir` 未配置或为空 | 跳过 comparison 阶段(预期行为,不产 `comparison/` 子目录) |
 | version 含非白名单字符 | 自动归一为 `_`,不报错 |

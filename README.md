@@ -17,14 +17,14 @@ Agent 型（单个 AI 专家）
 
 专家目录下的 `model-skills/` 包含完整的 ModelEvo 技能集，导入后专家可直接调度执行真实计算；`_modelevo-shared/` 为公共代码（配置读写 + 数据安全红线）。
 
-- 路由与知识：`model-task-routing` / `model-knowledge`
-- 共享能力：`data-cleaning` / `feature-analysis`
-- 分类建模：`classification-model-orchestration` / `classification-model-task-spec` / `classification-model-development` / `classification-model-training` / `classification-model-tuning` / `classification-model-evaluation` / `classification-model-comparison` / `classification-model-report`
+- 知识库：`model-knowledge`
+- 共享能力：`data-cleaning` / `credit-data-analysis` / `model-scoring`
+- 分类建模：`classification-model-task-spec` / `classification-model-development` / `classification-model-training` / `classification-model-tuning` / `classification-model-comparison` / `credit-model-report` / `score-to-fico`
 
 ## 使用示例
 
 - 基于本地样本文件做一个信贷逾期风险分类模型，并产出评分卡
-- 帮我做特征分析，按 IV / PSI / 缺失率 筛选不达标的变量
+- 帮我做特征分析，按 IV / PSI / 缺失率 查看不达标变量（credit-data-analysis）
 - 对比多个候选模型的 AUC / KS 分桶排序性，给出推荐与上线建议
 
 ## 目录结构
@@ -34,9 +34,10 @@ risk-control-modeling/
 ├── .codebuddy-plugin/plugin.json   # 专家元数据（含 skills 挂载声明）
 ├── agents/risk-control-modeling.md # 专家知识体（角色/能力/SOP/红线）
 ├── avatars/expert.png              # 头像
-├── model-skills/                   # 挂载的 ModelEvo 技能集（16 个 skill）
-│   ├── _modelevo-shared/           # 公共代码（数据安全红线/配置读写），install 时置于此处
-│   ├── model-task-routing/  ...    # 各 skill（均含 SKILL.md）
+├── CHANGELOG.md                    # 版本迭代信息（仅供包维护者）
+├── model-skills/                   # 挂载的 ModelEvo 技能集（11 个 skill）
+│   ├── _modelevo-shared/           # 公共代码（数据安全红线/配置读写/metrics）
+│   └── classification-model-development/ ...  # 各 skill（均含 SKILL.md）
 └── README.md
 ```
 

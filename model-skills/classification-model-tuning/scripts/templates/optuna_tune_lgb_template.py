@@ -33,7 +33,7 @@ def objective(trial, X_train, y_train, X_test, y_test):
         "metric": "auc",
         "verbosity": -1,
         "random_state": 42,
-        "n_estimators": 500,
+        "n_estimators": 300,
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.05, log=True),
         "num_leaves": trial.suggest_int("num_leaves", 16, 63),
         "max_depth": trial.suggest_int("max_depth", 4, 8),
@@ -99,7 +99,7 @@ def main():
     elapsed = time.time() - t0
 
     best = study.best_params
-    best["n_estimators"] = 500
+    best["n_estimators"] = 300
     best["objective"] = "binary"
     best["metric"] = "auc"
     best["random_state"] = 42

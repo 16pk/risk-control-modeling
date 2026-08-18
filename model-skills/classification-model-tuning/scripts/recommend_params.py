@@ -91,22 +91,22 @@ def _recommend_xgb(
     if status == "underfit":
         new["max_depth"] = _ci(B, "max_depth", new.get("max_depth", 6) + 1)
         new["min_child_weight"] = max(
-            1, _ci(B, "min_child_weight", new.get("min_child_weight", 20) / 2)
+            1, _ci(B, "min_child_weight", new.get("min_child_weight", 50) / 2)
         )
         new["learning_rate"] = round(
-            _clip(B, "learning_rate", new.get("learning_rate", 0.03) / 2), 4
+            _clip(B, "learning_rate", new.get("learning_rate", 0.02) / 2), 4
         )
-        new["n_estimators"] = _ci(B, "n_estimators", new.get("n_estimators", 800) * 1.5)
+        new["n_estimators"] = _ci(B, "n_estimators", new.get("n_estimators", 300) * 1.5)
     elif status == "overfit":
         new["max_depth"] = _ci(B, "max_depth", new.get("max_depth", 6) - 1)
         new["reg_lambda"] = round(
             _clip(B, "reg_lambda", new.get("reg_lambda", 1.0) * 2), 4
         )
         new["min_child_weight"] = _ci(
-            B, "min_child_weight", new.get("min_child_weight", 20) * 2
+            B, "min_child_weight", new.get("min_child_weight", 50) * 2
         )
     elif status == "underconverged":
-        new["n_estimators"] = _ci(B, "n_estimators", new.get("n_estimators", 800) * 2)
+        new["n_estimators"] = _ci(B, "n_estimators", new.get("n_estimators", 300) * 2)
     elif status == "unstable_psi":
         new["subsample"] = round(
             _clip(B, "subsample", new.get("subsample", 0.8) - 0.1), 3

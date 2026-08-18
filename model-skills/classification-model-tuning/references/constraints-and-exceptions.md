@@ -7,12 +7,12 @@
 ### 1.1 做什么
 
 - 对 baseline run 做规则诊断(欠/过拟合/不稳定/未收敛)→ 推荐超参 / Optuna 搜索 → 重训产 `-tuned` 新 run
-- 基于 feature-analysis csv 按高 PSI / 低 IV / 高缺失率剔除特征 → 用 baseline 超参重训产 `-feat` 新 run
+- 数据直算（读 baseline 的 train/oot parquet）按高 PSI / 低 IV / 高缺失率剔除特征 → 用 baseline 超参重训产 `-feat` 新 run
 
 ### 1.2 不做什么
 
 - 不训练 baseline(`classification-model-training` 职责)
-- 不做特征质量分析 IV/PSI/相关性(`feature-analysis` 职责)
+- 不做特征质量分析 IV/PSI/相关性(`credit-data-analysis` 职责)
 - 不做会话级横向对比聚合(`classification-model-comparison` 职责)
 
 ## 2. 何时用

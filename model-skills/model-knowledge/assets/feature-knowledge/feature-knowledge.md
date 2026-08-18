@@ -1,6 +1,6 @@
 # 特征知识库
 
-登记各业务域可复用的特征宽表与特征清单，供 data-cleaning / feature-analysis 选特征时检索。特征清单 csv 落 `feature-list/` 目录，新增特征表时在下表追加一行。
+登记各业务域可复用的特征宽表与特征清单，供 data-cleaning / credit-data-analysis 选特征时检索。特征清单 csv 落 `feature-list/` 目录，新增特征表时在下表追加一行。
 
 ## 常用特征列表
 

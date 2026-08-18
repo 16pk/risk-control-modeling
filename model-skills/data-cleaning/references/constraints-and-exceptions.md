@@ -12,11 +12,11 @@
 - **去重**：按 `(id_col, dt_col)` 去重，组内优先保留 label 非空行，全空则保留首行兜底。
 - **特征清单派生**：派生 `feature-list.csv`（排除 id/dt/label 列），可选按 `feature_list_source` 清单取交集。
 - **清洗方案**：产出 `cleaning-scheme.json` + `cleaning-report.md`，记录「对哪些特征、做了怎样的处理」及命中统计。
-- **明确不做**：不剔特征、不处理 label 非法值/缺失标签（保留在 feature-analysis 切分后 OOT 防御）、不写 `selected_features.txt`、不切三档 parquet。
+- **明确不做**：不剔特征、不处理 label 非法值/缺失标签（保留在 training 即时切分后 OOT 防御）、不写 `selected_features.txt`、不切三档 parquet。
 
 ## 3. 哨兵值语义
 
-哨兵值 = 数据中代表「无数据 / 拒贷 / 异常」的占位取值。默认集合 `[-1,-2,-9,-99,-999,-9999,-99999]`，由 data-cleaning 统一管理；`feature-analysis` 不再做替换，只做校验 + 提醒。若业务上某特征哨兵值有真实语义（如趋势类 -1/0/1），应在 `--invalid-values` 中排除该值或传 `[]` 关闭。
+哨兵值 = 数据中代表「无数据 / 拒贷 / 异常」的占位取值。默认集合 `[-1,-2,-9,-99,-999,-9999,-99999]`，由 data-cleaning 统一管理。若业务上某特征哨兵值有真实语义（如趋势类 -1/0/1），应在 `--invalid-values` 中排除该值或传 `[]` 关闭。
 
 ## 4. 强门禁约定
 

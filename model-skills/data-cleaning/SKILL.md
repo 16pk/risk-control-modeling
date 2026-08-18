@@ -1,19 +1,19 @@
 ---
 name: data-cleaning
-description: 建模 pipeline 内部的数据清洗环节，位于特征分析(feature-analysis)之前。承接用户提供的本地数据文件 / 从 hive 下载到本地的数据文件，完成哨兵值/无效值替换为 NaN、按用户+日期去重，产出清洗后 parquet + feature-list.csv + 可复用清洗方案(cleaning-scheme.json + cleaning-report.md)。发现异常值时任务暂停、弹出提示让用户确认是否继续。仅由编排层自动调起，不设独立触发词。
+description: 建模 pipeline 内部的数据清洗环节，位于特征分析(credit-data-analysis)之前。承接用户提供的本地数据文件，完成哨兵值/无效值替换为 NaN、按用户+日期去重，产出清洗后 parquet + feature-list.csv + 可复用清洗方案(cleaning-scheme.json + cleaning-report.md)。发现异常值时任务暂停、弹出提示让用户确认是否继续。仅由编排层自动调起，不设独立触发词。
 ---
 
 # data-cleaning
 
-建模 pipeline 中样本进入流程后的**第一道工序**，位于 `feature-analysis` 之前。它承接用户提供的本地数据文件（或从 hive 下载到本地的数据文件），统一收口原先散落在各 skill 中的「哨兵值/无效值替换为 NaN」逻辑，并按「用户 + 日期」维度去重，产出清洗后 parquet 供后续任务消费。
+建模 pipeline 中样本进入流程后的**第一道工序**，位于 `credit-data-analysis` 之前。它承接用户提供的本地数据文件，统一收口原先散落在各 skill 中的「哨兵值/无效值替换为 NaN」逻辑，并按「用户 + 日期」维度去重，产出清洗后 parquet 供后续任务消费。
 
-> ⚠️ **触发定位**：本 skill 仅由 `classification-model-orchestration` 编排自动调起，**不设独立触发词**（与 `feature-analysis` 一致）。
+> ⚠️ **触发定位**：本 skill 仅由 `classification-model-development` 编排自动调起，**不设独立触发词**。
 
 ## 1. 输入依赖
 
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
-| 数据文件 | ✅ | 用户提供 / 从 hive 下载到本地 | 含 `id 列 + 特征列 + label 列 + 日期列`，支持所有 pandas 可读格式（.parquet/.csv/.feather/.xlsx/.xls/.json） |
+| 数据文件 | ✅ | 用户提供 / 从 hive 下载到本地 | 含 `id 列 + 特征列 + label 列 + 日期列`，支持所有 pandas 可读格式（.parquet/.csv/.feather/.xlsx/.xls/.json）；本地文件唯一链路 |
 | `id_col` / `dt_col` / `label_col` | ✅ | 数据探查由大模型自主识别 + 用户确认后传入 | 不硬编码默认列名；脚本校验三列均存在 |
 | 哨兵值集合 | 否 | 默认 `[-1,-2,-9,-99,-999,-9999,-99999]`，CLI `--invalid-values` 覆盖 | 命中这些值的特征列替换为 NaN |
 | `feature_list_source` | 否 | 特征清单文件（.csv 取 `feature_name` 列 / .txt 按行） | 派生 feature-list.csv 时取交集；不传则派生全量特征列 |
@@ -87,8 +87,8 @@ python <skill_dir>/scripts/clean_data.py \
 | 上下游 | Skill | 关系 |
 |---|---|---|
 | 上游 | 用户本地 parquet/csv/feather | 数据源（本 skill 是样本进入 pipeline 的第一道清洗工序，承接 task-spec 转写的本地样本） |
-| 下游 | `feature-analysis` | 读 `data-cleaning/sample.parquet` + `feature-list.csv`，内部切分做 IV/PSI/相关性分析 |
-| 下游 | `classification-model-training` | 经 feature-analysis 产出的 `splits/` 消费 |
+| 下游 | `credit-data-analysis` | 读 `data-cleaning/sample.parquet` + `feature-list.csv`，做分月 PSI/IV 体检（pipeline 特征分析） |
+| 下游 | `classification-model-training` | 消费 `data-cleaning/sample.parquet` + `model.split` 即时切分训练 |
 | 依赖 | `_modelevo-shared` | 复用 `gen_feature_list`（特征清单解析唯一真相）、`config_io`（配置/安全红线） |
 
 ## 6. 执行约束
@@ -97,7 +97,7 @@ python <skill_dir>/scripts/clean_data.py \
 |---|---|
 | 哨兵值仅作用于特征列 | id / dt / label 列不参与替换，避免误伤标签与主键 |
 | 去重保留规则 | 按 `(id_col, dt_col)` 去重，组内优先保留 label 非空行；全空则保留首行兜底 |
-| label 非法值剔除**暂不处理** | 该职责保留在 `feature-analysis` 切分后的 OOT 防御逻辑中，本 skill 不动 |
+| label 非法值剔除**暂不处理** | 该职责保留在 `classification-model-training` 即时切分后的 OOT 防御逻辑中，本 skill 不动 |
 | 强门禁 | 发现哨兵值命中 → 任务暂停 → 弹提示 → 用户确认是否继续 |
 
 > 覆盖范围、异常处理、交互约定详情见 `references/constraints-and-exceptions.md`。

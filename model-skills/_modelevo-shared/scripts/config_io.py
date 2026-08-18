@@ -170,13 +170,12 @@ def validate_split_ranges(model: dict) -> None:
     在训练消费时按区间即时切分; task-spec 的 sample_config.*.yaml 的 split 段仅「记录/透传」,
     调用本函数只校验记录区间的合法性, 不再驱动切分。
 
-    仅当 model.split 存在时触发。约束(间隔逻辑):
+    仅当 model.split 存在时触发。约束:
       1. 三档齐全(train_range/test_range/oot_range 缺一报错)
       2. 每档 [起, 止] 为合法日期(YYYY-MM-DD / YYYYMMDD 双兼容)且起 ≤ 止
-      3. 三档时序递增(train ≤ test ≤ oot), 允许相邻(前档结束日次日后档开始日),
-         仅真正重叠或逆序才报错
-      4. 三档并集 ⊆ model.fetch_dt(划分范围不得超出取数窗口);
+      3. 三档并集 ⊆ model.fetch_dt(划分范围不得超出取数窗口);
          local_file 模式不强制 fetch_dt, 若未填则跳过本条
+      注: 不再强制 train/test/oot 三档时间递增(允许任意时序排布, 由业务侧保证切分合理性)。
 
     Args:
         model: 配置 model 段
@@ -194,20 +193,11 @@ def validate_split_ranges(model: dict) -> None:
             raise ValueError("model.split 须三档齐全, 缺 %s" % key)
         ranges[name] = _parse_range_pair(name, split[key])
 
-    ordered = [("train", ranges["train"]), ("test", ranges["test"]), ("oot", ranges["oot"])]
-    for (n1, r1), (n2, r2) in zip(ordered, ordered[1:]):
-        # 前档结束日必须早于后档开始日: 允许相邻(前档结束日次日 = 后档开始日),
-        # 仅当前档结束日 >= 后档开始日时视为重叠或逆序
-        if r1[1] >= r2[0]:
-            raise ValueError(
-                "split.%s_range [%s,%s] 与 split.%s_range [%s,%s] 重叠或逆序, "
-                "要求 train<test<oot(允许相邻, 间隔≥1天)" % (n1, r1[0], r1[1], n2, r2[0], r2[1])
-            )
-
     fetch_dt = model.get("fetch_dt")
     if isinstance(fetch_dt, list) and len(fetch_dt) == 2:
-        union_start = ranges["train"][0]
-        union_end = ranges["oot"][1]
+        # 并集取三档起的最小、止的最大(不假设三档时序递增)
+        union_start = min(r[0] for r in ranges.values())
+        union_end = max(r[1] for r in ranges.values())
         # local_file 模式不强制 fetch_dt(本地 parquet 无取数窗口概念);
         # fetch_dt 为空字符串或占位时跳过本条校验
         f_vals = [str(v).strip() for v in fetch_dt if str(v).strip()]

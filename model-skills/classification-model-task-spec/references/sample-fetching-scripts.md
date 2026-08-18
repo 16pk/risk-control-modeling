@@ -29,7 +29,7 @@ python scripts/fetch_sample_task_spec.py \
 **脚本行为**：
 - 全仓库已废除 spark 取数，仅支持 local_file：`_link_or_copy_local` 转写，`.parquet` 直接链接，`.csv` / `.feather` 读后写 parquet
 - 落 yaml 含 `model.mode="local_file"`、`model.local_parquet_path=<path>`、`model.split.{train,test,oot}_range`
-- 校验仅做 `check_sensitive` + `validate_split_ranges`（校验「记录」区间的时序/格式合法性，不驱动切分）
+- 校验仅做 `check_sensitive` + `validate_split_ranges`（校验「记录」区间的格式/范围合法性，不驱动切分；不强制三档时序递增）
 
 **`_manifest.json` 额外字段**：`mode: "local_file"` / `local_parquet_path: <path>` / `id_cols`/`label_col`/`dt_col` 沿用用户指定
 
@@ -37,7 +37,7 @@ python scripts/fetch_sample_task_spec.py \
 
 ## 2. （已废弃）独立样本分析报告
 
-v2.1 精简重构起：**不再产独立样本分析报告**（`data-profile/report.md` + `report.xlsx`）。样本充足度在需求澄清时口头确认，标签质量/分月分布由 `credit-data-analysis`（建模 pipeline 特征分析）在 Stage 0 统一产出。
+**不再产独立样本分析报告**（`data-profile/report.md` + `report.xlsx`）。样本充足度在需求澄清时口头确认，标签质量/分月分布由 `credit-data-analysis`（建模 pipeline 特征分析）在 Stage 0 统一产出。
 
 `run_sample_analysis_task_spec.py` 保留脚本但**不再由编排强制调用**，仅在用户明确要求"先看样本标签分布"时手动运行。
 

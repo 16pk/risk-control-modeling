@@ -17,7 +17,7 @@ model:
 
   # train/test/oot 时间划分: 仅「记录/透传」供用户确认需求规格, 不再驱动本地切分。
   # 切分与切分统计已后置到 feature-analysis, 切分区间单一真相 = feature_config.yaml 的 model.split。
-  # 仍由 config_io.validate_split_ranges 校验记录区间的时序/格式合法性。
+  # 仍由 config_io.validate_split_ranges 校验记录区间的格式合法性(不再强制时序递增)。
   split:
     train_range: ["20260410", "20260510"]
     test_range:  ["20260511", "20260520"]
