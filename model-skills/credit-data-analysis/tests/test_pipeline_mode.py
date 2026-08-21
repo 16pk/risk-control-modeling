@@ -132,3 +132,89 @@ def test_missing_split_range_errors(sample_data, tmp_path):
     )
     assert proc.returncode != 0
     assert "oot_range" in proc.stderr
+
+
+# ---------------- v2.5 修复：--feature-list 透传特征清单 ----------------
+
+def test_feature_list_mode_selects_exact_columns(sample_data, tmp_path):
+    """--feature-list 精确选列（主入口）：报告只含清单列，manifest 记录清单。"""
+    fl = sample_data / "feature-list.csv"
+    pd.DataFrame({"feature_name": ["f1", "f2"]}).to_csv(fl, index=False)
+    out = tmp_path / "out_fl"
+    proc = subprocess.run(
+        [PYTHON, str(SCRIPT),
+         "--data-file", str(sample_data / "sample.parquet"),
+         "--feature-list", str(fl),
+         "--iv-label", "label", "--time-col", "pday",
+         "--base-month", "2026-05",
+         "--output-dir", str(out), "--output-file", "特征分析结果.xlsx"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, f"脚本失败: {proc.stderr[-2000:]}"
+    # 报告只含清单列 f1/f2（不含 f0）
+    md = (out / "特征分析结果.md").read_text(encoding="utf-8")
+    assert "| f1 |" in md
+    assert "| f2 |" in md
+    assert "| f0 |" not in md
+    assert "特征来源: 特征清单" in md
+    manifest = json.loads((out / "_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["params"]["feature_list"] == str(fl)
+    assert manifest["params"]["feature_source"] == "feature-list"
+    assert "feature_start" not in manifest["params"]  # 清单模式不记录区间
+
+
+def test_feature_list_mode_extra_columns(sample_data, tmp_path):
+    """--feature-list + --feature-extra 追加额外列。"""
+    fl = sample_data / "feature-list.csv"
+    pd.DataFrame({"feature_name": ["f1"]}).to_csv(fl, index=False)
+    out = tmp_path / "out_fl_extra"
+    proc = subprocess.run(
+        [PYTHON, str(SCRIPT),
+         "--data-file", str(sample_data / "sample.parquet"),
+         "--feature-list", str(fl), "--feature-extra", "f2",
+         "--iv-label", "label", "--time-col", "pday",
+         "--base-month", "2026-05",
+         "--output-dir", str(out), "--output-file", "特征分析结果.xlsx"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, f"脚本失败: {proc.stderr[-2000:]}"
+    md = (out / "特征分析结果.md").read_text(encoding="utf-8")
+    assert "| f1 |" in md and "| f2 |" in md
+    assert "| f0 |" not in md
+
+
+def test_feature_list_missing_cols_warn_not_fail(sample_data, tmp_path):
+    """清单含不在样本中的列：仅 WARN 不报错（容忍列漂移）。"""
+    fl = sample_data / "feature-list.csv"
+    pd.DataFrame({"feature_name": ["f1", "ghost_col"]}).to_csv(fl, index=False)
+    out = tmp_path / "out_fl_warn"
+    proc = subprocess.run(
+        [PYTHON, str(SCRIPT),
+         "--data-file", str(sample_data / "sample.parquet"),
+         "--feature-list", str(fl),
+         "--iv-label", "label", "--time-col", "pday",
+         "--base-month", "2026-05",
+         "--output-dir", str(out), "--output-file", "特征分析结果.xlsx"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, f"脚本失败: {proc.stderr[-2000:]}"
+    assert "ghost_col" in proc.stdout  # WARN 打印
+    md = (out / "特征分析结果.md").read_text(encoding="utf-8")
+    assert "缺失 1 列" in md
+    manifest = json.loads((out / "_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["params"]["feature_list_missing"] == ["ghost_col"]
+
+
+def test_no_feature_source_errors(sample_data, tmp_path):
+    """--feature-list 与区间参数均缺 → 报错提示迁移（不再默认区间）。"""
+    out = tmp_path / "out_none"
+    proc = subprocess.run(
+        [PYTHON, str(SCRIPT),
+         "--data-file", str(sample_data / "sample.parquet"),
+         "--iv-label", "label", "--time-col", "pday",
+         "--base-month", "2026-05",
+         "--output-dir", str(out), "--output-file", "特征分析结果.xlsx"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode != 0
+    assert "--feature-list" in proc.stderr

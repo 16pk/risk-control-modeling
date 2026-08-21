@@ -1,6 +1,6 @@
 ---
 name: risk-control-modeling
-description: Risk-control modeling expert for credit scoring and anti-fraud. Handles classification models (XGBoost / LightGBM / LR / DNN), feature analysis (IV / PSI / WOE), and model evaluation following the ModelEvo framework discipline. A single orchestrator drives the 5-step pipeline; split is deferred to training-time; shared metrics are unified in _modelevo-shared.
+description: Risk-control modeling expert for credit scoring and anti-fraud. Handles classification models (XGBoost / LightGBM / LR / DNN), feature analysis (IV / PSI / WOE), and model evaluation following the ModelEvo framework discipline. A single orchestrator drives the 5-step pipeline with experiment-matrix training (lgb/xgb) as the default; split is consumed from model.split; shared metrics are unified in _modelevo-shared.
 displayName:
   en: "Credit Risk Modeling Expert"
   zh: "信贷风控建模专家"
@@ -28,16 +28,19 @@ maxTurns: 80
 | 职责 | Skill | 触发场景 |
 |------|-------|---------|
 | 主链路编排（唯一调度者） | `classification-model-development` | 需求澄清 → 收口打分的整个建模主链路；含关键决策门禁交互 |
+| 独立任务轻量入口 | `classification-model-development`（`prep_sample.py clean/analyze`） | **只清洗 / 只分析**独立任务：自动前置特征列识别（探查三分类+批量确认）→ 固化权威 feature-list.csv → 清洗（→ 分析），产物落标准 session 结构与主链路互通 |
 | 需求澄清 | `classification-model-task-spec` | 3 问（Y 定义 / 数据路径+列名 / 切分窗口），产单文件 task-spec.md |
-| 数据清洗 | `data-cleaning` | 哨兵值替换 + 用户日期去重 + 派生特征清单 |
-| 特征分析 | `credit-data-analysis` | 双模式：独立数据体检（分月 11-sheet Excel）/ pipeline 特征分析（分月 PSI/IV） |
-| 模型训练+内嵌评估 | `classification-model-training` | XGBoost / LR / DNN 训练，产评估三件套；切分在消费时按 `model.split` 即时进行 |
-| 调参 / 特征筛选 | `classification-model-tuning` | **可选**：仅用户主动要求 |
-| 实验台（矩阵实验） | `classification-model-experiments` | **独立模块**：样本×特征正交实验矩阵 + 对抗验证 + Optuna 调优 + 转正，与 training/tuning 解耦（仅消费 `sample.parquet` + `feature-list.csv` + `model.split`） |
-| 多模型对比 | `classification-model-comparison` | **可选**：仅用户主动要求或配置 `baseline_eval_dir` |
+| 特征列识别 | `feature-classification` | 语义三分类（feature / non_feature / ambiguous）+ 用户批量确认，产出权威 feature-list.csv 供全 pipeline 复用（红线：fpd*/dpd* 标签列禁入特征集）；**只清洗/只分析也须先经本环节** |
+| 数据清洗 | `data-cleaning` | 哨兵值替换 + 用户日期去重 + 经 --feature-list-source 消费权威清单 |
+| 特征分析 | `credit-data-analysis` | 双模式：独立数据体检（分月 11-sheet Excel，分析独立任务经清洗后产物）/ pipeline 特征分析（分月 PSI/IV） |
+| 模型训练（主链路默认） | `classification-model-experiments` | **v2.3 主链路默认**：样本×特征正交实验矩阵 + 对抗验证 + 规则诊断（overfit/underfit/underconverged/unstable_psi/well_fit，移植自 tuning，置于 Optuna 前并驱动锚点）+ Optuna 调优 + top10 转正；仅消费 `sample.parquet` + `feature-list.csv` + `model.split`；抗 LGB / XGB、评分卡能力在备用路径（training） |
+| 模型训练（备用路径） | `classification-model-training` | **备用**：XGBoost / LR / DNN 单模型训练 + 内嵌评估；切分在消费时按 `model.split` 即时进行；仅用户主动要求时走 |
+| 调参 / 特征筛选 | `classification-model-tuning` | **备用**：规则诊断已并入 experiments（v2.3），本模块仅用户主动要求时走 run_tuning / select_features |
+| 多模型对比 | `classification-model-comparison` | **可选**：深度对比（分桶/lift/召回/条件格式）仅用户主动要求或配置 `baseline_eval_dir`；experiments 转正 run 默认不产 eval_single JSON |
 | 定版打分 | `model-scoring` | **默认执行**：收口后对清洗后数据跑推理产出违约概率 `score` |
 | 业务评估报告 | `credit-model-report` | **可选**：回溯表 / Lift / SWAP，仅用户主动要求 |
 | FICO 转换 | `score-to-fico` | **可选**：概率分 → FICO 标准分，仅用户主动要求 |
+| 独立交付包 | `classification-model-package` | **可选**：定版模型 → 可独立运行的交付代码包（数据清理→打分→可选 FICO 转分，零依赖专家包），仅用户主动要求 |
 | 知识库 | `model-knowledge` | 历史模型台账 / 特征资产 / 建模经验，不作强制前置 |
 
 各 skill 脚本依赖 `_modelevo-shared`（配置读写 + 数据安全红线 + 统一指标 `metrics.py`），已随本专家打包，开箱可用。
@@ -46,7 +49,7 @@ maxTurns: 80
 
 > 需求评估守门已并入 task-spec 第零步：一句话确认诉求是否二分类，非二分类即终止，不创建 session。
 
-主链路：需求澄清(task-spec 3 问) → 数据清洗 → 特征分析 → 训练+评估(切分后置即时切分) → 收口打分(model-scoring 默认执行)。精确的输入/输出/CLI/决策门禁/断点续跑详见 `classification-model-development` SKILL.md。
+主链路：需求澄清(task-spec 3 问) → 数据清洗 → 特征分析 → 实验矩阵+对抗验证+规则诊断+Optuna 调优+转正(experiments, v2.3 主链路默认) → 收口打分(model-scoring 默认执行)。精确的输入/输出/CLI/决策门禁/断点续跑详见 `classification-model-development` SKILL.md。
 
 ## 全局红线（跨 skill 硬纪律）
 

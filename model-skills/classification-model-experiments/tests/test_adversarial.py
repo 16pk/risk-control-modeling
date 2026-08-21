@@ -23,9 +23,13 @@ def test_compute_drop_masks():
     imp = pd.DataFrame({"feature": ["a", "b", "c"], "total_gain": [9, 2, 1]})
     masks = adversarial.compute_drop_masks(proba, drop_pct=0.5, importance_df=imp,
                                            top_k=2, features=["a", "b", "c", "d"])
-    # 50% of 6 = 3 个样本剔除
+    # 50% of 6 = 3 个样本剔除：剔除 proba 最低（最不像 OOT）的 3 个
     assert masks["sample_drop_n"] == 3
-    assert masks["sample_drop_mask"][0] and masks["sample_drop_mask"][1]
+    dropped_probas = proba[masks["sample_drop_mask"]]
+    kept_probas = proba[~masks["sample_drop_mask"]]
+    # 被剔除的样本 proba 全部 <= 保留样本 proba（剔除低分、保留高分）
+    assert dropped_probas.max() <= kept_probas.min()
+    assert sorted(dropped_probas.tolist()) == [0.05, 0.1, 0.2]
     assert masks["feature_drop_list"] == ["a", "b"]
     assert masks["feature_drop_n"] == 2
 
@@ -51,3 +55,15 @@ def test_train_adversarial_smoke():
     model, imp, oot_auc = adversarial.train_adversarial(dev, oot, ["f1", "f2"], seed=42)
     assert 0.0 < oot_auc <= 1.0
     assert sorted(imp["feature"].tolist()) == ["f1", "f2"]
+
+
+def test_train_adversarial_early_stopping_effective():
+    """早停有效性：val 独立于训练集、有区分度时提前收敛，迭代数 < n_estimators。"""
+    rng = np.random.RandomState(0)
+    n = 2000
+    dev = pd.DataFrame({"f1": rng.rand(n), "f2": rng.rand(n)})
+    oot = pd.DataFrame({"f1": rng.rand(n) + 1.0, "f2": rng.rand(n)})
+    model, _, _ = adversarial.train_adversarial(dev, oot, ["f1", "f2"], seed=42)
+    # 合并集分层 7:3 切分后 val 独立于训练集，有区分度时应提前早停
+    assert model.best_iteration_ < model.n_estimators
+    assert model.best_iteration_ >= 1

@@ -7,8 +7,9 @@
 ## 整体能力
 
 - **需求澄清（3 问）**：预测目标 Y 定义 / 数据路径+列名 / Train-Test-OOT 切分窗口（`classification-model-task-spec`，产单文件 `task-spec.md`；非二分类诉求在 task-spec 第零步一句话确认后终止）
-- **分类建模（5 步主链路）**：需求澄清 → 数据清洗 → 特征分析（credit-data-analysis，分月 PSI/IV 报告）→ baseline 训练（training 内嵌评估，切分后置即时切分）→ 收口默认打分（model-scoring）→ 可选 FICO / 业务报告
-  - 迭代方向（仅用户主动要求）：超参调优（Optuna）、换算法（xgb / dnn / lr）、特征筛选（select_features，训练不通过 IV/PSI 自动筛特征）
+- **独立任务轻量入口（v2.5.2）**：用户**只清洗 / 只分析**给定数据文件时，经 `classification-model-development` 的 `prep_sample.py clean/analyze` 直接调度——自动前置特征列识别（语义三分类 + 用户批量确认）→ 固化权威 feature-list.csv → 清洗（→ 特征分析），产物落标准 session 结构，与主链路互通
+- **分类建模（5 步主链路）**：需求澄清 → 数据清洗 → 特征分析（credit-data-analysis，分月 PSI/IV 报告）→ 实验矩阵+对抗验证+规则诊断+Optuna 调优+转正（classification-model-experiments，v2.3 主链路默认）→ 收口默认打分（model-scoring）→ 可选 FICO / 业务报告
+  - 迭代方向（仅用户主动要求）：继续实验（新方案）、深度对比（comparison）；**备用路径** training/tuning（单模型训练 / 调参）仅在用户明确要求时走
 - **共享能力**：数据清洗、特征分析（credit-data-analysis 双模式：pipeline 特征分析 + 独立数据体检）、模型知识库
 - **会话连续性**：基于 session 根 `_manifest.json` 自动推断进度，支持断点续跑
 
@@ -20,15 +21,17 @@ model-skills/
 │
 ├── classification-model-task-spec/      # 需求澄清 3 问，产单文件 task-spec.md
 ├── classification-model-development/    # 模型开发总控（唯一调度者，吸收原 orchestration）
-├── classification-model-training/       # 模型训练（xgb / dnn / lr）+ 内嵌评估（eval_single.py）
-├── classification-model-tuning/         # 模型调参 / 特征筛选（可选）
-├── classification-model-experiments/    # 实验台：样本×特征正交矩阵 + 对抗验证 + Optuna 调优 + 转正（独立模块）
+├── classification-model-training/       # 模型训练（xgb / dnn / lr）+ 内嵌评估（备用路径，v2.3）
+├── classification-model-tuning/         # 模型调参 / 特征筛选（备用路径，规则诊断已并入 experiments）
+├── classification-model-experiments/    # v2.3 主链路默认训练：样本×特征正交矩阵 + 对抗 + 规则诊断 + Optuna 调优 + 转正
 ├── classification-model-comparison/     # 多模型 N-way 对比（可选）
+├── classification-model-package/        # 定版模型 → 独立交付代码包（可选，仅用户主动触发）
 ├── credit-model-report/                 # 业务评估报告（回溯表/Lift/SWAP/打分分布，模板化 Excel，可选）
 ├── score-to-fico/                       # 概率分 → FICO 标准分转换（可选，仅用户主动触发）
 ├── model-scoring/                       # 定版模型打分（development 收口后默认执行）
 │
-├── data-cleaning/                       # 数据清洗（哨兵值替换 + 用户日期去重 + 派生特征清单）
+├── feature-classification/              # 特征列识别与复用（语义三分类 + 用户批量确认，产权威特征清单）
+├── data-cleaning/                       # 数据清洗（哨兵值替换 + 用户日期去重 + 消费权威清单）
 └── credit-data-analysis/                # 特征分析（双模式：pipeline 特征分析 + 独立数据体检，分月 xlsx + md）
 ```
 
@@ -40,8 +43,9 @@ model-skills/
 
 | Skill | 说明 | 触发词示例 |
 |---|---|---|
-| `data-cleaning` | 数据清洗：哨兵值/无效值替换为 NaN + 按用户+日期去重 + 派生 `feature-list.csv`，产出清洗后 `sample.parquet` 与可复用清洗方案。**仅由编排层调起，不设独立触发词** | （无独立触发词；`classification-model-development` 调起） |
-| `credit-data-analysis` | 双模式：①独立数据体检（分月 xlsx + md，PSI 基准月用户指定）；②pipeline 特征分析（development Stage 2 调起，PSI 基准月默认第一个 OOT 月须用户确认）。**不切分、不产筛选 csv** | 样本分析、特征分析、特征IV、特征PSI、数据体检、分月监控、逾期率走势 |
+| `feature-classification` | 特征列识别与复用：探查阶段语义三分类（feature / non_feature / ambiguous，规则库 v0）+ 通配符分组 + 用户批量确认，产出权威 `feature-list.csv`（全 pipeline 唯一真相）与逐列分类档案（含判定人）。红线：`fpd*`/`dpd*` 标签列禁入特征集。跨 session 档案复用，仅列集合变化时增量重分类。**只清洗/只分析独立任务也须先经本环节** | （无独立触发词；`classification-model-development` Stage 1 / 轻量入口 `prep_sample.py` 调起） |
+| `data-cleaning` | 数据清洗：哨兵值/无效值替换为 NaN + 按用户+日期去重 + 消费权威 `feature-list.csv`（`--feature-list-source`），产出清洗后 `sample.parquet` 与可复用清洗方案。**由编排层调起，不设独立触发词**（独立任务经 `prep_sample.py clean`） | （无独立触发词；`classification-model-development` 调起） |
+| `credit-data-analysis` | 双模式：①独立数据体检（分月 xlsx + md，PSI 基准月用户指定，**先清洗再分析**）；②pipeline 特征分析（development Stage 2 调起，PSI 基准月默认第一个 OOT 月须用户确认）。**不切分、不产筛选 csv** | 样本分析、特征分析、特征IV、特征PSI、数据体检、分月监控、逾期率走势 |
 | `model-scoring` | 定版模型打分：用收口确认的定版模型（`finalized_model.json`）对清洗后 `sample.parquet` 跑推理，产出违约概率分 `score`，透传所有非特征列。**收口后默认执行（用户可叫停）** | （无独立触发词；`classification-model-development` Stage 6 调起） |
 | `model-knowledge` | 沉淀建模方法论、业务领域知识、特征资产、历史模型档案与建模经验教训，供检索复用（LLM 内部知识，不作强制前置） | 查历史建模经验、归档建模知识、查业务字段定义 |
 
@@ -50,11 +54,12 @@ model-skills/
 | Skill | 说明 |
 |---|---|
 | `classification-model-task-spec` | 需求澄清 3 问（Y 定义 / 数据路径+列名 / 切分窗口），输出单文件 `task-spec.md` + `_manifest.json`（split_ranges 记录入口）；非二分类诉求在第零步一句话确认后终止 |
-| `classification-model-development` | 开发总控（唯一调度者）：串联 task-spec → data-cleaning → credit-data-analysis → training → 收口打分，管理路径接力、决策点询问（2 必问 + 1 确认）、report.md 回填（4 节）、断点续跑 |
-| `classification-model-training` | 训练 xgb / dnn / lr 模型，读 `sample.parquet` + `model.split` 即时切分（写 run 内部 `data/splits/` 临时目录），内嵌 `eval_single.py` 评估产标准化三件套，并与历史 baseline 做 AUC/KS/分档多维对比 |
-| `classification-model-tuning` | 基于 baseline run 做超参调优（Optuna）或特征筛选（PSI/IV/缺失率，数据直算），产 `-tuned` / `-feat` 新 run。**可选：仅用户主动要求时调度** |
-| `classification-model-experiments` | **实验台（独立模块）**：lgb baseline → 样本方案（全量/最近N月/线性时间加权/对抗剔除）× 特征方案（全量/importance 95%/IV-PSI/对抗剔除）正交矩阵 → 对抗验证（lgb train-vs-oot 双产出）→ leaderboard（OOT AUC 排序 + 乐观偏差标注）→ 每算法 winner Optuna 邻域调优（-opt）→ top10 展示用户确认后转正（`new-models/` + `finalized_model.json`）。**完全独立于 training/tuning，仅消费 `sample.parquet` + `feature-list.csv` + `model.split`**。**红线例外（用户授权本模块）：对抗格/IV-PSI 格 OOT 可参与对抗训练与筛选统计（禁早停/禁进训练/禁结构选择），OOT 指标标注乐观偏差** |
-| `classification-model-comparison` | 多模型 N-way 横向对比，消费 training 产出的 eval JSON 做 delta 分析与缺口清单，输出含条件格式的 Excel。**可选：仅用户主动要求或配 `baseline_eval_dir` 时** |
+| `classification-model-development` | 开发总控（唯一调度者）：串联 task-spec → data-cleaning → credit-data-analysis → experiments（v2.3 主链路默认）→ 收口打分，管理路径接力、决策点询问（2 必问 + 矩阵方案确认）、report.md 回填（4 节）、断点续跑 |
+| `classification-model-training` | 训练 xgb / dnn / lr 模型，读 `sample.parquet` + `model.split` 即时切分（写 run 内部 `data/splits/` 临时目录），内嵌 `eval_single.py` 评估产标准化三件套，并与历史 baseline 做 AUC/KS/分档多维对比。**备用路径（v2.3）：仅用户主动要求时调度** |
+| `classification-model-tuning` | 基于 baseline run 做超参调优（Optuna）或特征筛选（PSI/IV/缺失率，数据直算），产 `-tuned` / `-feat` 新 run。**备用路径（v2.3）：规则诊断已并入 experiments，仅用户主动要求时调度** |
+| `classification-model-experiments` | **v2.3 主链路默认训练模块**：lgb baseline → 样本方案（全量/最近N月/线性时间加权/对抗剔除）× 特征方案（全量/importance 95%/IV-PSI/对抗剔除）正交矩阵 → 对抗验证（lgb train-vs-oot 双产出）→ leaderboard（OOT AUC 排序 + 乐观偏差标注）→ 每算法 winner 规则诊断（五状态，移植自 tuning，Optuna 前执行并驱动锚点）→ Optuna 邻域调优（-opt，well_fit 可跳过）→ top10 展示用户确认后转正（`new-models/` + `finalized_model.json`）。仅消费 `sample.parquet` + `feature-list.csv` + `model.split`。**红线例外（用户授权本模块）：对抗格/IV-PSI 格 OOT 可参与对抗训练与筛选统计（禁早停/禁进训练/禁结构选择），OOT 指标标注乐观偏差** |
+| `classification-model-comparison` | 多模型 N-way 横向对比，消费 training / experiments 产出的 eval JSON 做 delta 分析与缺口清单，输出含条件格式的 Excel。**可选：仅用户主动要求或配 `baseline_eval_dir` 时**（experiments 转正 run 默认不产 eval_single JSON，深度对比需主动触发） |
+| `classification-model-package` | **定版模型 → 独立交付代码包**：消费 session 定版产物（`finalized_model.json` + `new-models/{run}/model` + `cleaning-scheme` + 权威 feature-list + `fico/coef.json`），组装 `delivery/` 自包含包（数据清理→打分→可选 FICO 转分，零引用专家包仅依赖 pip 包，一条命令跑通）。**可选：仅用户主动触发**（收口后出口，不默认执行） | 打包交付、组装成可交付代码包、交付给工程 |
 | `credit-model-report` | 从打分 CSV 生成**业务评估报告**（Excel：回溯表/建模信息/KS/特征重要性/Lift+SWAP/打分分布 PSI+分桶+分段逾期率），支持新 vs 基线模型 SWAP 迁移与客群过滤。**可选：仅用户主动要求** |
 | `score-to-fico` | **概率分 → FICO 标准分转换**（LR 校准 + 标准分映射，范围约 [400,780]）。**可选：仅用户主动要求（收口后不再默认询问）**，消费 model-scoring 打分结果，产 session 根 `fico/` |
 
@@ -70,14 +75,29 @@ classification-model-development（唯一调度者）
    │
    ├─ Stage 0: task-spec 需求澄清 3 问（Y定义 / 数据路径+列名 / 切分窗口）
    │            → 产 task-spec/task-spec.md + _manifest.json
-   ├─ Stage 1: data-cleaning → sample.parquet + feature-list.csv
-   ├─ Stage 2: credit-data-analysis（pipeline 模式，分月 PSI/IV 报告，PSI 基准月=首个OOT月须确认）
-   ├─ Stage 3: training（读 sample.parquet + model.split 即时切分，内嵌评估）
-   │            → new-models/{algo}-v{N}/
-   ├─ Stage 4: 迭代（可选，loop）：run_tuning / 换算法 / select_features（仅用户主动要求）
-   ├─ Stage 5: 收口 → report.md（4 节）+ finalized_model.json
-   ├─ Stage 6: model-scoring（默认执行，用户可叫停）→ scoring/score_sample.parquet
-   └─ Stage 7: 可选（仅用户主动触发）：score-to-fico / credit-model-report
+   ├─ Stage 1: feature-classification 特征列识别（语义三分类 + 用户批量确认）
+   │            → 产 sample-features/feature-classification.json + feature-list.csv（权威清单）
+   ├─ Stage 2: data-cleaning → sample.parquet + feature-list.csv（经 --feature-list-source 取交集）
+   ├─ Stage 3: credit-data-analysis（pipeline 模式，分月 PSI/IV 报告，PSI 基准月=首个OOT月须确认）
+   ├─ Stage 4: experiments（v2.3 主链路默认，读 sample.parquet + feature-list.csv + model.split）
+   │            → 矩阵 + 对抗 + 规则诊断 + Optuna 调优 + top10 转正
+   │            → experiments/ + new-models/{algo}-v{N}/
+   ├─ Stage 5: 迭代（可选，loop）：继续实验 / 深度对比 comparison / 备用路径 training/tuning（仅用户主动要求）
+   ├─ Stage 6: 收口 → report.md（4 节）+ finalized_model.json
+   ├─ Stage 7: model-scoring（默认执行，用户可叫停）→ scoring/score_sample.parquet
+   ├─ Stage 7: model-scoring（默认执行，用户可叫停）→ scoring/score_sample.parquet
+  └─ Stage 8: 可选（仅用户主动触发）：score-to-fico / credit-model-report / classification-model-package（定版模型 → 独立交付包）
+
+独立任务（只清洗 / 只分析，不经主链路）
+   │
+   ▼
+development 轻量入口 prep_sample.py clean|analyze
+   ├─ feature-classification（探查三分类 + 编排层交互确认 id/dt/label + 批量确认 exclude/keep）
+   │    → sample-features/feature-classification.json + feature-list.csv（权威清单）
+   ├─ data-cleaning（--feature-list-source 消费权威清单，哨兵强门禁 --auto-confirm 续跑）
+   │    → sample-features/data-cleaning/sample.parquet
+   └─ [analyze] credit-data-analysis（独立体检模式，--feature-list 精确选列，PSI 基准月确认）
+        → sample-features/credit-data-analysis/特征分析结果.xlsx/.md
 ```
 
 ## 前置依赖
@@ -111,20 +131,22 @@ runs/20260624-114630-draw_willingness/
 │   ├── task-spec.md                       # 单文件需求规格（3 问结论）
 │   └── _manifest.json                     # 结构化核心信息（含 split_ranges）
 ├── sample-features/
+│   ├── feature-classification.json      # 特征列语义三分类档案（含判定人 rule/user）
+│   ├── feature-list.csv                 # 权威特征清单（确认后，全 pipeline 唯一真相）
 │   ├── data-cleaning/
-│   │   ├── sample.parquet                 # 清洗后样本（id + features + label）
-│   │   └── feature-list.csv
+│   │   ├── sample.parquet               # 清洗后样本（id + features + label）
+│   │   └── feature-list.csv             # 与权威清单取交集后的派生产物
 │   └── credit-data-analysis/
 │       ├── 特征分析结果.xlsx / .md         # 分月 PSI/IV 体检报告
 │       └── _manifest.json
-├── new-models/                            # 各次 run 的训练产物
-│   └── {algo}-v{N}/                       # xgb-v1 / xgb-v1-feat / xgb-v1-tuned ...
-│       ├── config/train_config.yaml       # 含 model.split（切分唯一真相）
-│       ├── data/splits/                   # 即时切分的 run 内部临时三档（非 session 交付层）
-│       ├── features/ · model/ · evaluation/（内嵌 eval_single 产三件套）
-│       ├── predictions/ · explainability/
-│       ├── comparison/ · logs/
-│       └── _manifest.json
+├── experiments/                           # v2.3 主链路：实验矩阵产物（experiments 模块）
+│   ├── matrix-plan.md                     # 矩阵规划 + 断点状态
+│   ├── leaderboard.md / .xlsx             # OOT AUC 排序（含乐观偏差标注）
+│   └── {algo}-{scheme}-{feat}-v{N}[-opt]/ # 各格实验（manifest/model/evaluation/data/...）
+├── new-models/                            # 各次 run 的训练产物（experiments 转正 + 备用路径）
+│   └── {algo}-v{N}/                       # lgb-v1 / xgb-v2 ...
+│       ├── model/model.pkl + model_meta.json（experiments 转正；备用路径 training 有 data/splits/ 等）
+│       └── config.json                    # produced_by=skills/model-experiments（转正）或 model-training
 ├── finalized_model.json                   # 定版标记（收口确认上线候选后落）
 ├── scoring/                               # 定版模型打分产物（默认执行）
 │   └── score_sample.parquet               # 透传非特征列 + score 概率列
@@ -132,6 +154,8 @@ runs/20260624-114630-draw_willingness/
     ├── coef.json                          # LR 校准参数
     ├── fico_predictions.parquet           # 转分结果（含 bscore）
     └── fitting-summary.{json,md}          # 拟合方案
+└── delivery/                              # 独立交付包（可选，仅用户主动触发，classification-model-package）
+    ├── run.py + pipeline/ + assets/ + requirements.txt + README.md + package-manifest.json
 ```
 
 > 可追溯性由 `_manifest.json` + `report.md` 承担；session 级产物只含上述目录，不再产出 session 级 `splits/`、`feature-analysis/`、`scripts/` 快照层、`deliverables.md`。
@@ -188,10 +212,12 @@ runs/20260624-114630-draw_willingness/
 
 ## 关键约束
 
-- **单一调度者**：任何建模任务由 `classification-model-development` 编排，各 skill 不绕过总控自写脚本
+- **单一调度者**：任何建模任务由 `classification-model-development` 编排，各 skill 不绕过总控自写脚本（独立任务走轻量入口 `prep_sample.py clean/analyze`，同样是 development 编排）
+- **独立任务先识别再清洗/分析**：只清洗 / 只分析也必须先经 `feature-classification` 产出权威清单再清洗/分析（轻量入口已串联，禁止直接跳过特征识别单跑清洗/分析）
+- **特征清单唯一真相**：`sample-features/feature-list.csv`（feature-classification 确认后权威清单），data-cleaning / credit-data-analysis / experiments 全部消费同一份，不各自派生
 - **切分唯一真相**：`model.split`（feature_config.yaml / train_config.yaml）三档区间；切分在训练消费时即时进行，不落 session 级 `splits/`
 - **训练不筛特征**：训练过程不通过 IV/PSI 指标筛选特征（boundary_filter 只做常量/泄漏/ID/全缺失安全过滤）
 - **文件落盘**：需求和分析结果必须保存为文件，不能只留在对话中
-- **演化闭环**：training 内嵌评估 → 可选 comparison → 回流 development/training 形成多轮迭代；完成后归档至 `model-knowledge`
+- **演化闭环**：experiments 实验矩阵 → leaderboard 评选 → 规则诊断 + Optuna 调优 → 可选 comparison 深度对比 → 回流 development 形成多轮迭代；完成后归档至 `model-knowledge`
 - **数据安全红线**：`config_io.check_sensitive` 拦截配置中硬编码的身份证号 / 手机号；`where` / `sample_table` 等字段严禁写入明细个人数据
 - **实验台红线例外（仅 `classification-model-experiments`）**：用户授权对抗格 / IV-PSI 格可让 OOT 参与对抗训练与筛选统计（禁早停 / 禁进训练集 / 禁结构超参选择），对应 OOT 指标标注乐观偏差

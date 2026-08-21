@@ -9,7 +9,7 @@
 ## 2. 职责边界
 
 - **哨兵值替换**：仅把特征列中命中的哨兵值（如 -1/-2/-999）替换为 NaN，不减少特征数。label / id / dt 列不参与。
-- **去重**：按 `(id_col, dt_col)` 去重，组内优先保留 label 非空行，全空则保留首行兜底。
+- **去重**：按 `(id_col, dt_col)` 去重，组内优先保留 label 非空行，全空或未提供 label_col 则保留首行兜底。
 - **特征清单派生**：派生 `feature-list.csv`（排除 id/dt/label 列），可选按 `feature_list_source` 清单取交集。
 - **清洗方案**：产出 `cleaning-scheme.json` + `cleaning-report.md`，记录「对哪些特征、做了怎样的处理」及命中统计。
 - **明确不做**：不剔特征、不处理 label 非法值/缺失标签（保留在 training 即时切分后 OOT 防御）、不写 `selected_features.txt`、不切三档 parquet。
@@ -29,7 +29,7 @@
 
 ## 5. 列名识别约定
 
-ID 列、日期列、标签列在数据探查阶段由大模型**自主识别 + 用户确认**后，通过 `--id-col` / `--dt-col` / `--label-col` 显式传入；脚本只做列存在性校验，不硬编码默认列名。
+ID 列、日期列在数据探查阶段由大模型**自主识别 + 用户确认**后，通过 `--id-col` / `--dt-col` 显式传入；标签列 `--label-col` **可选**（无标签场景可不传，去重退化为保首行、哨兵替换不做坏率统计），脚本只做列存在性校验，不硬编码默认列名。
 
 ## 6. 数据安全红线
 
@@ -41,7 +41,7 @@ ID 列、日期列、标签列在数据探查阶段由大模型**自主识别 + 
 |---|---|
 | `--input` 未传 / 文件不存在 | 报错终止（`FileNotFoundError`） |
 | 数据文件扩展名不受支持 | 报错终止（`ValueError`，列出支持的格式） |
-| `id_col` / `dt_col` / `label_col` 任一列不在样本中 | 报错终止（`ValueError`） |
+| `id_col` / `dt_col` 任一列不在样本中 | 报错终止（`ValueError`）；`label_col` 仅当显式传入且不在样本中时报错 |
 | 样本除 id/dt/label 外无特征列 | 报错终止（`ValueError`） |
 | `--session-dir` 未传 | 报错终止（`ValueError`） |
 | `feature_list_source` 指向文件不存在 | 报错终止（`FileNotFoundError`） |

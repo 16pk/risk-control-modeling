@@ -59,8 +59,23 @@ def test_infer_algo(tmpdir):
     open(os.path.join(model_dir, 'model.pkl'), 'wb').close()
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lr'}, None) == 'lr'
 
+    # v2.3: lgb/xgb 转正产物(model.pkl + meta.algo)
+    assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lgb'}, None) == 'lgb'
+    assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'xgb'}, None) == 'xgb'
+
     # 显式 --algo 覆盖
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lr'}, 'dnn') == 'dnn'
+    assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lgb'}, 'xgb') == 'xgb'
+
+
+def test_infer_algo_pkl_missing_algo_error(tmpdir):
+    """model.pkl 但 meta 缺 algo → 报错提示。"""
+    model_dir = os.path.join(tmpdir, 'model')
+    os.makedirs(model_dir)
+    open(os.path.join(model_dir, 'model.pkl'), 'wb').close()
+    with pytest.raises(SystemExit) as ei:
+        score_data.infer_algo(__import__('pathlib').Path(model_dir), {}, None)
+    assert '--algo' in str(ei.value)
 
 
 def test_read_model_meta(tmpdir):
@@ -146,6 +161,60 @@ def test_missing_feature_error(tmpdir):
         capture_output=True, text=True)
     assert r.returncode != 0
     assert '缺失' in r.stderr and 'f2' in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# v2.3: lgb/xgb pkl(joblib) 打分(experiments 转正产物)
+# ---------------------------------------------------------------------------
+def _make_pkl_model(model_dir, algo, feature_names=('f0', 'f1', 'f2')):
+    """训练微型 sklearn 分类器并 joblib.dump 落 model.pkl(experiments 转正形态)。"""
+    import joblib
+
+    os.makedirs(model_dir, exist_ok=True)
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(200, len(feature_names)))
+    y = (X[:, 0] + rng.normal(0, 0.3, 200) > 0).astype(int)
+    if algo == 'lgb':
+        import lightgbm as lgb
+        m = lgb.LGBMClassifier(n_estimators=20, learning_rate=0.1, verbosity=-1)
+    else:
+        import xgboost as xgb
+        m = xgb.XGBClassifier(n_estimators=20, max_depth=2, verbosity=0)
+    m.fit(pd.DataFrame(X, columns=feature_names), y)
+    joblib.dump(m, os.path.join(model_dir, 'model.pkl'))
+    with open(os.path.join(model_dir, 'model_meta.json'), 'w') as f:
+        json.dump({'algo': algo, 'feature_names': list(feature_names)}, f)
+    return m
+
+
+@pytest.mark.parametrize('algo', ['lgb', 'xgb'])
+def test_pkl_scoring_end_to_end(tmpdir, algo):
+    pytest.importorskip(algo)
+    feature_names = ('f0', 'f1', 'f2')
+    model_dir = _make_pkl_model(os.path.join(tmpdir, f'model-{algo}'), algo, feature_names)
+    data_path = os.path.join(tmpdir, 'sample.parquet')
+    src = _make_data(data_path, feature_names)
+    out_path = os.path.join(tmpdir, 'scoring', 'score_sample.parquet')
+
+    r = subprocess.run(
+        [_py(), SCRIPT, '--model-path', model_dir, '--data', data_path, '--out', out_path],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+    res = pd.read_parquet(out_path)
+    assert 'score' in res.columns
+    assert {'fuid', 'f_p_date', 'label'}.issubset(res.columns)
+    for f in feature_names:
+        assert f not in res.columns
+    assert len(res) == len(src)
+    assert res['score'].between(0, 1).all()
+
+    # 与直接 predict_proba 违约列一致
+    import joblib
+    m = joblib.load(os.path.join(model_dir, 'model.pkl'))
+    X = src[list(feature_names)]
+    expected = np.asarray(m.predict_proba(X))[:, 1]
+    assert np.allclose(res['score'].values, expected, atol=1e-9)
 
 
 if __name__ == '__main__':

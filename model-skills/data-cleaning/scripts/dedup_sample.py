@@ -35,7 +35,10 @@ def dedup_by_user_date(
         # 组内优先保留 label 非空行: 加临时 rank 列(非空=1 排前), 稳定排序后按 keys 去重取首行。
         # 稳定排序保证「组内 label 全空 / 多个非空」时仍按原始行序取首行, 结果确定。
         rank_col = "_dedup_label_rank"
-        df = df.assign(**{rank_col: df[label_col].notna().astype(int)})
+        df = pd.concat(
+            [df, df[label_col].notna().astype(int).to_frame(rank_col)],
+            axis=1,
+        )
         df = (
             df.sort_values(keys + [rank_col], ascending=[True, True, False], kind="stable")
             .drop_duplicates(subset=keys, keep="first")

@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
-"""winner Optuna 邻域调优产 -opt run（plan §2.1 D2 / §5.2.9）。
+"""winner 规则诊断 + Optuna 邻域调优产 -opt run（plan §2.1 D2 / §5.2.9 / v2.3）。
 
 - 每算法 OOT AUC 最优 1 组进调优；TPE seed=42；目标 = val AUC；100 轮早停；n_trials 默认 25。
-- 搜索空间 = 以 winner 格 M/S 推导超参为锚点收窄邻域（hyperparams.optuna_anchors）。
-- **-opt 格复用 winner 的 data/ 快照（train/val/oot 同基线），不重新切分**；
-  产物规范与单格完全一致（manifest 记 is_tuned / base_exp / optuna）。
+- **v2.3 起 Optuna 前先执行 winner 规则诊断**（diagnose_winner）：
+  按状态（overfit/underfit/underconverged/unstable_psi/well_fit）调用
+  recommend_winner.adjust_optuna_anchors 调整搜索锚点；well_fit 默认跳过 Optuna 直接复用 winner
+  （--force-tune 覆盖）；诊断结果落 -opt 格 manifest.json["diagnosis"] 并在日志展示。
+- 搜索空间 = 以 winner 格 M/S 推导超参为锚点收窄邻域（hyperparams.optuna_anchors）±诊断调整。
+- **v2.6.1（方案 A）：-opt 格不再读取 winner 的 data/train|val|oot.parquet**（该快照已不在每格落盘）；
+  train/val/oot 由主流程（run_experiments.main）运行时重切并透传，天然与 winner 同基线；
+  data/ 仅保留 features.json + params.json + weights.csv 作为 Optuna 依赖。
+- 产物规范与单格完全一致（manifest 记 is_tuned / base_exp / optuna / diagnosis）。
 - Optuna 缺失时清晰报错并跳过（相关测试 skipif）。
 """
 from __future__ import annotations
@@ -22,9 +28,11 @@ import pandas as pd
 
 import _bootstrap  # noqa: F401
 import algo_factory
+from diagnose_winner import diagnose_winner
 from evaluate import evaluate, write_eval
 from hyperparams import optuna_anchors
 from leaderboard import collect_results
+from recommend_winner import adjust_optuna_anchors
 
 
 def _sha256(path: str) -> str:
@@ -47,26 +55,11 @@ def _best_per_algo(rows: List[Dict]) -> Dict[str, Dict]:
     return best
 
 
-def _suggest_params(algo: str, anchor: Dict, trial) -> Dict:
-    sp = optuna_anchors(algo, anchor)
-    p = dict(anchor)
-    p["learning_rate"] = trial.suggest_float("learning_rate", *sp["learning_rate"])
-    p["n_estimators"] = int(sp["n_estimators"])
-    if algo == "lgb":
-        p["num_leaves"] = trial.suggest_int("num_leaves", *sp["num_leaves"])
-        p["min_child_samples"] = trial.suggest_int("min_child_samples", *sp["min_child_samples"])
-        p["feature_fraction"] = trial.suggest_float("feature_fraction", *sp["feature_fraction"])
-        p["bagging_fraction"] = trial.suggest_float("bagging_fraction", *sp["bagging_fraction"])
-    elif algo == "xgb":
-        p["max_depth"] = trial.suggest_int("max_depth", *sp["max_depth"])
-        p["min_child_weight"] = trial.suggest_float("min_child_weight", *sp["min_child_weight"], log=True)
-        p["colsample_bytree"] = trial.suggest_float("colsample_bytree", *sp["colsample_bytree"])
-        p["subsample"] = trial.suggest_float("subsample", *sp["subsample"])
-    return p
+def _load_winner_inputs_legacy(win_dir: str):
+    """兼容旧目录：读 winner 格 data/ 完整快照（train/val/oot.parquet + features/weights）。
 
-
-def _load_winner_inputs(win_dir: str):
-    """读 winner 格 data/ 快照: (train_df, val_df, oot_df, features, weights)。"""
+    仅当主流程未透传 train_df 时回退使用（v2.6.1 之前生成的实验格）。
+    """
     win_data = os.path.join(win_dir, "data")
     if not os.path.isdir(win_data):
         return None
@@ -85,6 +78,98 @@ def _load_winner_inputs(win_dir: str):
         return None
 
 
+def _load_winner_inputs(win_dir: str):
+    """读 winner 格 data/ 依赖: (features, weights)。
+
+    v2.6.1（方案 A）：train/val/oot 各格不再落盘，由主流程运行时重切透传；
+    本函数只读 features.json（特征名）+ weights.csv（样本权重，可选）两个轻量依赖。
+    """
+    win_data = os.path.join(win_dir, "data")
+    if not os.path.isdir(win_data):
+        return None
+    try:
+        with open(os.path.join(win_data, "features.json"), "r", encoding="utf-8") as f:
+            features = json.load(f)
+        weights = None
+        wpath = os.path.join(win_data, "weights.csv")
+        if os.path.exists(wpath):
+            weights = pd.read_csv(wpath)["weight"].to_numpy()
+        return features, weights
+    except Exception:
+        return None
+
+
+def _suggest_params(algo: str, anchor: Dict, search_space: Dict, trial) -> Dict:
+    """按(诊断调整后的)搜索空间采样超参;search_space 由 optuna_anchors ± 诊断调整得到。"""
+    sp = search_space
+    p = dict(anchor)
+    p["learning_rate"] = trial.suggest_float("learning_rate", *sp["learning_rate"])
+    p["n_estimators"] = int(sp["n_estimators"])
+    if algo == "lgb":
+        p["num_leaves"] = trial.suggest_int("num_leaves", *sp["num_leaves"])
+        p["min_child_samples"] = trial.suggest_int("min_child_samples", *sp["min_child_samples"])
+        p["feature_fraction"] = trial.suggest_float("feature_fraction", *sp["feature_fraction"])
+        p["bagging_fraction"] = trial.suggest_float("bagging_fraction", *sp["bagging_fraction"])
+    elif algo == "xgb":
+        p["max_depth"] = trial.suggest_int("max_depth", *sp["max_depth"])
+        p["min_child_weight"] = trial.suggest_float("min_child_weight", *sp["min_child_weight"], log=True)
+        p["colsample_bytree"] = trial.suggest_float("colsample_bytree", *sp["colsample_bytree"])
+        p["subsample"] = trial.suggest_float("subsample", *sp["subsample"])
+    return p
+
+
+def _load_winner_meta(win_dir: str) -> Optional[Dict]:
+    """读 winner 格 model/model_meta.json: 返回 dict 或 None。"""
+    meta_path = os.path.join(win_dir, "model", "model_meta.json")
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _load_winner_eval(win_dir: str) -> Optional[Dict]:
+    """读 winner 格 evaluation/eval.json: 返回 payload 或 None。"""
+    eval_path = os.path.join(win_dir, "evaluation", "eval.json")
+    if not os.path.exists(eval_path):
+        return None
+    try:
+        with open(eval_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def diagnose_winner_exp(win_dir: str, spec: Dict):
+    """对 winner 格执行规则诊断（输入全部来自实验格自身产物）。
+
+    Returns:
+        (Diagnosis, Diagnosis.as_dict()) 二元组；输入缺失时返回 (None, None)。
+    """
+    meta = _load_winner_meta(win_dir)
+    eval_payload = _load_winner_eval(win_dir)
+    if meta is None or eval_payload is None:
+        return None, None
+    algo = spec.get("algo", "lgb")
+    metrics = eval_payload.get("splits", {})
+    used_params = dict(spec.get("params") or {})
+    best_iteration = meta.get("best_iteration")
+    psi_oot = None
+    # 对抗/IV-PSI 例外格自带 psi_oot；普通格由主流程视需要补算后覆盖（此处默认 None）
+    oot_metrics = metrics.get("oot") or {}
+    if oot_metrics.get("psi_oot") is not None:
+        psi_oot = oot_metrics.get("psi_oot")
+    from diagnose_winner import Diagnosis
+
+    diag = diagnose_winner(
+        metrics=metrics, used_params=used_params,
+        best_iteration=best_iteration, algo=algo, new_psi=psi_oot,
+    )
+    return diag, diag.as_dict()
+
+
 def tune_winner(
     spec: Dict,
     *,
@@ -93,12 +178,29 @@ def tune_winner(
     n_trials: int = 25,
     seed: int = 42,
     resume: bool = False,
+    force_tune: bool = False,
+    train_df: Optional[pd.DataFrame] = None,
+    val_df: Optional[pd.DataFrame] = None,
+    oot_df: Optional[pd.DataFrame] = None,
 ) -> Optional[Dict]:
-    """对单算法 winner 格做 Optuna 邻域调优，产 <winner_id>-opt 格。
+    """对单算法 winner 格做规则诊断 + Optuna 邻域调优，产 <winner_id>-opt 格。
+
+    v2.3 起流程：Optuna 前先对 winner 执行规则诊断（diagnose_winner）→
+    按诊断状态调整搜索锚点（overfit/underfit/underconverged/unstable_psi/well_fit）；
+    well_fit 默认跳过 Optuna 直接复用 winner（force_tune=True 强制调优）；
+    诊断结果落 -opt 格 manifest.json["diagnosis"]。
+
+    v2.6.1（方案 A）：data 快照不再落盘。train_df/val_df/oot_df 由主流程（run_experiments.main）
+    传入 winner 格同基线的已重切数据；若未传入则回退读取 winner 的 data/ 快照（兼容旧目录）。
 
     Returns:
-        -opt spec（status=done/failed）或 None（Optuna 缺失 / winner 输入缺失）。
+        -opt spec（status=done/failed）或 None（Optuna 缺失 / winner 输入缺失 / well_fit 跳过 /
+        入口防御触发）。
     """
+    # 入口防御（三保险）：winner 已是 -opt 格则直接返回，防任何调用路径重复调优
+    if spec.get("is_tuned"):
+        print(f"[tune] {spec['id']} 已是调优格（is_tuned），入口防御跳过")
+        return None
     tune_id = f"{spec['id']}-opt"
     exp_dir = os.path.join(exp_root, tune_id)
     os.makedirs(exp_dir, exist_ok=True)
@@ -109,19 +211,44 @@ def tune_winner(
         with open(os.path.join(exp_dir, "manifest.json"), "r", encoding="utf-8") as f:
             return json.load(f)
 
+    algo = spec.get("algo", "lgb")
+
+    # v2.3：规则诊断（输入全部来自 winner 格自身产物）
+    diag, diagnosis = diagnose_winner_exp(os.path.join(exp_root, spec["id"]), spec)
+    if diagnosis is None:
+        print(f"[diag] {spec['id']} 诊断输入缺失（model_meta/eval 不存在），跳过诊断")
+
+    # well_fit 默认跳过调优，直接复用 winner（force_tune 覆盖）
+    if diagnosis is not None and diagnosis.get("status") == "well_fit" and not force_tune:
+        print(f"[diag] {spec['id']} → well_fit（指标在合理区间），默认跳过 Optuna 调优"
+              f"（--force-tune 强制）")
+        return {
+            "id": tune_id, "algo": algo, "status": "skipped_well_fit",
+            "is_tuned": False, "skipped_reason": "well_fit",
+            "diagnosis": diagnosis, "base_exp": spec["id"],
+        }
+
     try:
         import optuna
     except ImportError:
         print(f'[tune] Optuna 未安装，跳过调优 {tune_id}（pip install --user "optuna<4"）')
         return None
 
-    loaded = _load_winner_inputs(os.path.join(exp_root, spec["id"]))
-    if loaded is None:
-        print(f"[tune] winner 格数据快照缺失: {spec['id']}")
-        return None
-    train_df, val_df, oot_df, features, weights = loaded
-    label_col_in = None  # 从快照文件无法直接得 label 列名；由调用方透传或推断
-    algo = spec["algo"]
+    loaded = None
+    if train_df is None:
+        # 兼容旧目录：回退读 winner 格 data/ 快照（train/val/oot.parquet）
+        loaded = _load_winner_inputs_legacy(os.path.join(exp_root, spec["id"]))
+        if loaded is None:
+            print(f"[tune] winner 格数据快照缺失: {spec['id']}")
+            return None
+        train_df, val_df, oot_df, features, weights = loaded
+    else:
+        deps = _load_winner_inputs(os.path.join(exp_root, spec["id"]))
+        if deps is None:
+            print(f"[tune] winner 格 data/ 依赖缺失（features.json/weights.csv）: {spec['id']}")
+            return None
+        features, weights = deps
+    # 由主流程透传的 train_df 已含 label 列；旧快照也统一重命名过
 
     def _num(df: pd.DataFrame) -> pd.DataFrame:
         return df[features].apply(pd.to_numeric, errors="coerce")
@@ -132,8 +259,17 @@ def tune_winner(
         print(f"[tune] winner 快照缺 label 列: {spec['id']}")
         return None
 
+    # v2.3：按诊断状态调整 Optuna 搜索锚点
+    diag_status = (diagnosis or {}).get("status") or "well_fit"
+    anchors = optuna_anchors(algo, anchor)
+    if diag is not None and diag_status != "well_fit":
+        anchors = adjust_optuna_anchors(anchors, diag, algo)
+        print(f"[diag] {spec['id']} → {diag_status}，Optuna 锚点已按诊断调整")
+    if diag_status == "well_fit":
+        print(f"[diag] {spec['id']} → well_fit，按默认锚点调优（--force-tune 生效）")
+
     def objective(trial):
-        params = _suggest_params(algo, anchor, trial)
+        params = _suggest_params(algo, anchor, anchors, trial)
         try:
             model = algo_factory.build_estimator(algo, params)
             algo_factory.fit_model(
@@ -247,9 +383,12 @@ def tune_winner(
     tune_spec["code_modified"] = False
     tune_spec["status"] = "done"
     tune_spec["fail_reason"] = None
+    if diagnosis is not None:
+        tune_spec["diagnosis"] = diagnosis
     tune_spec["optuna"] = {
         "n_trials": n_trials, "seed": seed, "target": "val_auc",
         "best_value": float(study.best_value), "best_params": best_params,
+        "search_space": anchors,  # 记录诊断调整后的搜索空间（含 n_estimators/early_stopping 等固定值）
     }
     with open(os.path.join(exp_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(tune_spec, f, ensure_ascii=False, indent=2)

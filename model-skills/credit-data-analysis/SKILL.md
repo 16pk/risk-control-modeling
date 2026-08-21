@@ -1,6 +1,6 @@
 ---
 name: credit-data-analysis
-description: 信贷特征分析 skill，双模式：①独立数据体检（用户主动发起"样本分析/特征分析/特征IV/特征PSI/数据体检/分月监控/逾期率走势"时优先使用，分月视角 11-sheet Excel）；②建模 pipeline 特征分析（development Stage 0 编排调起，从 feature_config.yaml 推导 PSI 基准月=第一个 OOT 月，产出 md+xlsx 报告）。不做三档切分、不产 IV/PSI 筛选 csv（切分后置到 training/tuning/evaluation 消费时即时进行，训练过程不通过 IV/PSI 指标筛选特征）。
+description: 信贷特征分析 skill，双模式：①独立数据体检（用户主动发起"样本分析/特征分析/特征IV/特征PSI/数据体检/分月监控/逾期率走势"时优先使用，分月视角 11-sheet Excel，可经 development 轻量入口 prep_sample.py analyze 在清洗后自动调用）；②建模 pipeline 特征分析（development Stage 0 编排调起，从 feature_config.yaml 推导 PSI 基准月=第一个 OOT 月，产出 md+xlsx 报告）。不做三档切分、不产 IV/PSI 筛选 csv（切分后置到 training/tuning/evaluation 消费时即时进行，训练过程不通过 IV/PSI 指标筛选特征）。
 ---
 
 # credit-data-analysis
@@ -17,6 +17,7 @@ description: 信贷特征分析 skill，双模式：①独立数据体检（用�
 > **职责边界**：
 > - **不做三档切分**：train/test/oot 切分后置到 training/tuning/evaluation 消费时即时进行（复用 training 的 `prepare_splits`），本 skill **不产 `splits/{train,test,oot}.parquet`**。
 > - **不产 IV/PSI 筛选 csv**：训练过程不通过 IV/PSI 指标筛选特征，本 skill 只做体检报告。
+> - **独立任务前置链路（v2.5.2）**：用户对原始数据文件直接发起分析时，须先经 `feature-classification`（识别特征列 + 固化权威清单）与 `data-cleaning`（清洗），再分析清洗后 `sample.parquet`——轻量入口 `prep_sample.py analyze` 已串联（特征识别 → 清洗 → 分析），禁止绕过前置直接分析原始数据（否则日期/订单号/标签列混入特征，哨兵值干扰 PSI/IV）。
 > - 本 skill 承担建模 pipeline 特征分析角色（Stage 0）。
 
 ## 1. 输入依赖
@@ -24,7 +25,7 @@ description: 信贷特征分析 skill，双模式：①独立数据体检（用�
 | 输入 | 必选 | 来源 | 说明 |
 |---|---|---:|---|---|
 | 数据文件 | ✅ | 用户指定路径（`.feather` / `.csv` / `.parquet`，pandas 可读格式） | 须含时间列（默认 `fsx_time`，可覆盖）+ 数值型特征列 + 风险标签列 |
-| 特征列范围 | ✅ | **交互确认**（门禁） | 起始列名 → 结束列名（区间连续含两端）+ 区间外额外特征列；起始/结束列名不在数据中直接报错重输 |
+| 特征列范围 | ✅ | **交互确认**（门禁） | 主入口 `--feature-list`（特征清单，CSV 取 `feature_name` 列 / TXT 按行）；清单缺失列仅 WARN 不报错（容忍列漂移）。无清单时回退 `--feature-start/--feature-end` 区间法（DEPRECATED，独立体检兼容） |
 | PSI 基准月份 | ✅ | **交互确认**（门禁） | pipeline 模式默认第一个 OOT 月；该月 PSI 记为 0，其余各月与之对比 |
 | IV 风险标签 | 否 | 默认自动选择第一个 `fpd`/`dpd` 前缀列 | 可用 `--iv-label` 指定，或 `--risk-labels` 手动指定多个标签 |
 | 输出位置 | 否 | 默认当前工作目录 | 推荐落 `<session_dir>/sample-features/credit-data-analysis/`（在建模 session 内时） |
@@ -38,8 +39,7 @@ description: 信贷特征分析 skill，双模式：①独立数据体检（用�
 ```bash
 python <skill_dir>/scripts/feature_analysis.py \
   --data-file <数据文件绝对路径> \
-  --feature-start tx_model_2_score \
-  --feature-end mob4_v5_score \
+  --feature-list <feature-list.csv> \
   --feature-extra ascore_fpd7_v3 \
   --base-month 2025-04 \
   --iv-label fpd7 \
@@ -47,12 +47,15 @@ python <skill_dir>/scripts/feature_analysis.py \
   [--output-dir <产物目录>]
 ```
 
+> **特征来源（v2.5 修复）**：主入口为 `--feature-list`（精确选列，与全框架特征清单唯一真相一致）；
+> 未提供清单时回退 `--feature-start/--feature-end` 区间法（**DEPRECATED**，仅无清单的独立体检场景兼容），两者均缺报错提示迁移。
+
 ### 2.2 pipeline 模式（development Stage 0 编排调起）
 
 ```bash
 python <skill_dir>/scripts/feature_analysis.py \
   --data-file <session_dir>/sample-features/data-cleaning/sample.parquet \
-  --feature-start <首特征> --feature-end <末特征> \
+  --feature-list <session_dir>/sample-features/feature-list.csv \
   --iv-label <label_col> \
   --time-col <dt_col> \
   --split-config <session_dir>/sample-features/feature_config.yaml \
@@ -76,8 +79,9 @@ python <skill_dir>/scripts/feature_analysis.py \
 | 参数 | 必选 | 默认值 | 说明 |
 |---|:---:|---|---|
 | `--data-file` | ✅ | - | 数据文件（`.feather` / `.csv` / `.parquet`，按扩展名自动选读取方式） |
-| `--feature-start` / `--feature-end` | ✅ | - | 特征列区间（含两端）；不在数据中报错 |
-| `--feature-extra` | 否 | 空 | 逗号分隔的区间外额外特征列 |
+| `--feature-list` | ✅ 主入口 | - | 特征清单（CSV 取 `feature_name` 列 / TXT 按行）；精确选列，与全框架特征清单唯一真相一致；清单缺失列 WARN 打印（不报错，容忍列漂移） |
+| `--feature-start` / `--feature-end` | DEPRECATED | - | 区间法（含两端）：**仅无 `--feature-list` 时回退**，独立体检模式兼容；两者与 `--feature-list` 均缺时报错提示迁移 |
+| `--feature-extra` | 否 | 空 | 逗号分隔的额外特征列（两种来源均追加） |
 | `--base-month` | 否 | pipeline 模式推导 | PSI 基准月份 `YYYY-MM`；pipeline 模式缺省时从 `--split-config` 的 `model.split.oot_range` 首月推导（第一个 OOT 月） |
 | `--split-config` | pipeline 必填 | 空 | pipeline 模式：`feature_config.yaml` 路径，用于推导 PSI 基准月 |
 | `--time-col` | 否 | `fsx_time` | 时间列名，须为 datetime 类型（脚本转月度） |
@@ -138,7 +142,8 @@ python <skill_dir>/scripts/feature_analysis.py \
 |---|---|
 | 数据文件不存在 / 格式不支持 | 报错并列出支持的格式（feather/csv/parquet） |
 | 时间列不存在 | 报错并列出前 10 个可用列名 |
-| 起始/结束特征列不在数据中 | 报错并让用户重输（区间含两端） |
+| 起始/结束特征列不在数据中 | 报错并让用户重输（区间含两端；`--feature-list` 主入口未提供时提示迁移到清单模式） |
+| 特征清单文件不存在 / 无列命中样本 | 报错指明清单路径，提示核对（清单缺失列仅 WARN，不中断） |
 | 特征列非数值 | 报错指出列名，提示排除或转换 |
 | 分箱边界不足（`<2` 个唯一值） | 该特征 PSI/IV 返回 NaN，不中断 |
 | `--split-config` 缺失 `model.split.oot_range` | 报错指明缺哪个字段，不静默兜底 |

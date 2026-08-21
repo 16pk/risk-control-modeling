@@ -3,18 +3,22 @@
 
 plan §2.1 E1 / C7 / C8 / D4：
   - 分类器：lgb 小模型（num_leaves=31 / lr=0.05 / 100 轮早停 / train vs oot）
-  - 特征剔除依据：total_gain（对抗 importance top-K）
-  - 样本剔除依据：predict_proba（离群度 = 被判为 oot 的概率，越高越像 OOT 分布）
+  - 特征剔除依据：total_gain（对抗 importance top-K，剔除最能区分两期分布的漂移特征）
+  - 样本剔除依据：predict_proba（被判为 oot 的概率，**剔除最不像 OOT 的低分样本**，
+    保留与未来分布接近的高分样本，使训练分布贴近 OOT）
   - 剔除幅度：AI 运行时评估推荐（按 AUC 与分位数），由主流程与用户确认后执行
+  - 早停/评估：合并集按 7:3 分层切 train/val（seed=42），val 作早停与 AUC 评估
+    （不复用训练集，保证早停有效 + 每轮评估成本降至约 30%）
 
 红线例外①（仅本模块授权）：OOT 可参与对抗分类器训练与样本/特征筛选统计；
 禁早停集 / 禁进训练集 / 禁结构超参选择。
 """
 from __future__ import annotations
 
-import os
 import json
-from typing import Dict, List, Tuple
+import logging
+import os
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,17 +28,30 @@ from algo_factory import feature_importances
 
 
 def train_adversarial(dev: pd.DataFrame, oot: pd.DataFrame, features: List[str],
-                      seed: int = 42) -> Tuple[object, pd.DataFrame, float]:
+                      seed: int = 42, log: Optional[logging.Logger] = None) -> Tuple[object, pd.DataFrame, float]:
     """训练 train-vs-oot 对抗分类器。
+
+    合并集（dev=0/oot=1）按 seed=42 分层 7:3 切 train/val：val 同时作早停集与 AUC 评估集。
+    不复用训练集做 eval_set（否则早停永不触发 + 每轮对全量算 AUC，成为性能瓶颈）。
+
+    Args:
+        dev: 开发池 DataFrame（train+test 合并）
+        oot: OOT DataFrame
+        features: 参与对抗的特征列表
+        seed: 随机种子
+        log: 可选 logger（打训练进度与时长）
 
     Returns:
         (model, importance_df, oot_auc)
         - model: LGBMClassifier（train=0/oot=1）
         - importance_df: feature_importances 输出（total_gain 降序）
-        - oot_auc: 对抗分类器在 oot 上判 oot 的 AUC（衡量可分性，越高分布差异越大）
+        - oot_auc: 对抗分类器在 val 上判 oot 的 AUC（衡量可分性，越高分布差异越大）
     """
+    import time
+
     import lightgbm as lgb
     from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import train_test_split
 
     n_dev, n_oot = len(dev), len(oot)
     y = np.array([0] * n_dev + [1] * n_oot, dtype=int)
@@ -42,18 +59,28 @@ def train_adversarial(dev: pd.DataFrame, oot: pd.DataFrame, features: List[str],
     X = pd.concat([dev[cols], oot[cols]], axis=0).reset_index(drop=True)
     X = X.apply(pd.to_numeric, errors="coerce")
 
+    # 分层 7:3 切 train/val（val 早停 + 评估，评估量从全量降至约 30%）
+    X_tr, X_va, y_tr, y_va = train_test_split(
+        X, y, test_size=0.3, random_state=seed, stratify=y)
+    if log is not None:
+        log.info("[对抗] 合并集 %d 行（dev=%d/oot=%d），切 train=%d/val=%d，特征 %d",
+                 len(X), n_dev, n_oot, len(X_tr), len(X_va), len(cols))
+
+    t0 = time.time()
     model = lgb.LGBMClassifier(
         objective="binary", num_leaves=31, learning_rate=0.05, n_estimators=1000,
         max_depth=-1, min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
         random_state=seed, verbosity=-1)
     model.fit(
-        X, y,
-        eval_set=[(X, y)],
+        X_tr, y_tr,
+        eval_set=[(X_va, y_va)],
         eval_metric="auc",
         callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(0)],
     )
-    proba = model.predict_proba(X)[:, 1]
-    oot_auc = float(roc_auc_score(y, proba))
+    if log is not None:
+        log.info("[对抗] 训练完成：%d 轮（早停）/ 耗时 %.1fs", model.best_iteration_, time.time() - t0)
+    proba = model.predict_proba(X_va)[:, 1]
+    oot_auc = float(roc_auc_score(y_va, proba))
     imp = feature_importances(model, "lgb", cols)
     return model, imp, oot_auc
 
@@ -88,6 +115,9 @@ def compute_drop_masks(proba_dev: np.ndarray, drop_pct: float,
                        features: List[str]) -> Dict:
     """按确认幅度计算双产出。
 
+    样本剔除方向：剔除 proba 最低（最不像 OOT）的样本，保留与未来分布接近的高分样本，
+    使训练分布贴近 OOT（与特征剔除方向一致）。
+
     Returns:
         {"sample_drop_mask": bool (dev 侧), "feature_drop_list": [feat],
          "sample_drop_n": int, "feature_drop_n": int}
@@ -96,7 +126,7 @@ def compute_drop_masks(proba_dev: np.ndarray, drop_pct: float,
     k = int(round(n_dev * drop_pct))
     sample_drop = np.zeros(n_dev, dtype=bool)
     if k > 0 and n_dev > 0:
-        idx = np.argsort(-proba_dev)[:k]
+        idx = np.argsort(proba_dev)[:k]
         sample_drop[idx] = True
     adv_top: List[str] = []
     if importance_df is not None and not importance_df.empty and top_k > 0:

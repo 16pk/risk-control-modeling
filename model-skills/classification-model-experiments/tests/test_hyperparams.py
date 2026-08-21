@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from hyperparams import derive_params, optuna_anchors
+from hyperparams import derive_params, optuna_anchors, validate_anchors
 
 
 def test_lgb_params_formula():
@@ -63,3 +63,44 @@ def test_optuna_anchors_xgb():
     sp = optuna_anchors("xgb", p)
     assert sp["max_depth"] == (3, 6)
     assert sp["min_child_weight"] == (1e-4, 1e-2)
+
+
+# ---------------- v2.5 治本：锚点 clip + fail-fast ----------------
+
+def test_optuna_anchors_lgb_mcs_clipped():
+    """① 锚点约束：0.002×M 公式值 clip 进经验域 [20,200] 再生成邻域。
+
+    26 万样本 → 0.002×260000=520 → clip 200 → 邻域 (120, 280)。
+    """
+    p = derive_params("lgb", 260_000, 50)
+    assert p["min_child_samples"] == 520  # 公式原始值（未 clip，训练仍用公式值）
+    sp = optuna_anchors("lgb", p)
+    assert sp["min_child_samples"] == (int(200 * 0.6), int(200 * 1.4))  # (120, 280)
+
+
+def test_optuna_anchors_lgb_mcs_no_clip_small():
+    """小样本不 clip（公式值已在经验域内）。"""
+    p = derive_params("lgb", 10_000, 50)
+    assert p["min_child_samples"] == 20  # max(20, 0.002*10000=20)
+    sp = optuna_anchors("lgb", p)
+    assert sp["min_child_samples"] == (int(20 * 0.6), int(20 * 1.4))  # (12, 28)
+
+
+def test_validate_anchors_ok():
+    validate_anchors({"learning_rate": (0.005, 0.06), "min_child_samples": (12, 28)})
+    validate_anchors({"n_estimators": 1000, "early_stopping": 100})  # 固定值不影响
+
+
+def test_validate_anchors_raises_on_inverted():
+    """fail-fast：low>high 非法区间直接 RuntimeError（启动即暴露）。"""
+    with pytest.raises(RuntimeError):
+        validate_anchors({"min_child_samples": (60, 5)})
+
+
+def test_optuna_anchors_never_inverted():
+    """出口 fail-fast：锚点生成不会产出 low>high（含极端小样本/大样本）。"""
+    for n in (100, 1000, 100_000, 1_000_000):
+        for algo in ("lgb", "xgb"):
+            p = derive_params(algo, n, 10)
+            sp = optuna_anchors(algo, p)
+            validate_anchors(sp, "optuna_anchors")  # 不抛即通过

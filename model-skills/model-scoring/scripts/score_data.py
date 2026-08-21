@@ -14,6 +14,8 @@
 - xgb:  model.json → xgboost.Booster 直接加载(最稳健的 xgb 推理路径);
        feature_names 取自 model_meta.json(与 dnn/lr 统一从该文件读, 避免依赖
        XgbFitter.save_model/load 对 meta 文件名的两套命名差异)。
+- lgb/xgb(pkl):  model.pkl → joblib.load 反序列化(classification-model-experiments 转正产物,
+       用 joblib.dump 落 LGBMClassifier / XGBClassifier);二维概率输出取违约列(第 1 列)。
 - dnn:  model.pkl → pickle.load 得 DnnPredictor(需 trainers.train_dnn 可 import,
        其 predict_proba 内部完成 缺失填充+标准化+MLP 前向)。
 - lr:   model.pkl → pickle.load 得 LrPredictor(需 trainers.train_lr 可 import,
@@ -45,6 +47,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -93,7 +96,7 @@ def read_model_meta(model_dir: Path) -> dict:
 
 
 def infer_algo(model_dir: Path, meta: dict, algo_override: Optional[str]) -> str:
-    """判定算法: model.json → xgb; model.pkl → meta.algo(dnn/lr)。
+    """判定算法: model.json → xgb; model.pkl → meta.algo ∈ {lgb, xgb}(experiments 转正) 或 {dnn, lr}。
 
     显式 --algo 优先; 无法判定时报错提示。
     """
@@ -103,11 +106,11 @@ def infer_algo(model_dir: Path, meta: dict, algo_override: Optional[str]) -> str
         return "xgb"
     if (model_dir / "model.pkl").exists():
         algo = (meta.get("algo") or "").lower()
-        if algo in ("dnn", "lr"):
+        if algo in ("lgb", "xgb", "dnn", "lr"):
             return algo
         raise SystemExit(
-            "[ERROR] model.pkl 存在但 model_meta.json 缺 algo 字段, 无法判定 dnn/lr。"
-            "请用 --algo dnn|--algo lr 显式指定。"
+            "[ERROR] model.pkl 存在但 model_meta.json 缺 algo 字段, 无法判定 lgb/xgb/dnn/lr。"
+            "请用 --algo lgb|xgb|dnn|lr 显式指定。"
         )
     raise SystemExit(
         f"[ERROR] 目录中未找到 model.json / model.pkl: {model_dir}"
@@ -115,7 +118,15 @@ def infer_algo(model_dir: Path, meta: dict, algo_override: Optional[str]) -> str
 
 
 def _model_file(model_dir: Path, algo: str) -> Path:
-    return model_dir / ("model.json" if algo == "xgb" else "model.pkl")
+    """定位模型文件: xgb 可能为 model.json(历史) 或 model.pkl(experiments 转正)。
+
+    规则: model.json 存在 → 用它;否则回退 model.pkl。lgb/dnn/lr 一律 model.pkl。
+    """
+    if algo == "xgb":
+        json_f = model_dir / "model.json"
+        if json_f.exists():
+            return json_f
+    return model_dir / "model.pkl"
 
 
 class _XgbScorer:
@@ -136,17 +147,34 @@ class _XgbScorer:
 
 
 def load_predictor(algo: str, model_dir: Path):
-    """按算法加载定版模型, 返回带 predict_proba(df[features]) 接口的预测器。"""
+    """按算法加载定版模型, 返回带 predict_proba(df[features]) 接口的预测器。
+
+    分支:
+      - xgb + model.json:  xgboost.Booster 加载, 用 _XgbScorer 包装(DMatrix 保留特征名)。
+      - lgb / xgb + model.pkl: joblib.load(experiments 转正产物, LGBMClassifier/XGBClassifier);
+            若反序列化结果是 Booster(无 predict_proba) 则 _XgbScorer 兜底包装。
+      - dnn / lr + model.pkl: pickle.load(predictor 内部已打包预处理逻辑, 需注入 training 脚本)。
+    """
     model_file = _model_file(model_dir, algo)
     if not model_file.exists():
         raise SystemExit(f"[ERROR] 模型文件不存在: {model_file}")
 
-    if algo == "xgb":
+    if algo == "xgb" and (model_dir / "model.json").exists():
         import xgboost as xgb
 
         booster = xgb.Booster()
         booster.load_model(str(model_file))
         return _XgbScorer(booster)
+
+    if algo in ("lgb", "xgb"):
+        # experiments 转正产物: joblib.load(sklearn 兼容分类器) —— 保留 xgb 走 pkl 的兼容路径
+        try:
+            obj = joblib.load(model_file)
+        except Exception as e:
+            raise SystemExit(f"[ERROR] joblib 加载 model.pkl 失败 ({algo}): {e}")
+        if hasattr(obj, "predict_proba"):
+            return obj
+        return _XgbScorer(obj)  # Booster 兜底包装
 
     # dnn / lr: 注入训练脚本目录后 pickle.load(predictor 内部已打包预处理逻辑)
     training = _locate_training_scripts()
@@ -157,7 +185,7 @@ def load_predictor(algo: str, model_dir: Path):
     elif algo == "lr":
         from trainers.train_lr import LrPredictor  # noqa: F401  确保类可 import
     else:
-        raise SystemExit(f"[ERROR] 未知 algo={algo!r}, 仅支持 xgb|dnn|lr")
+        raise SystemExit(f"[ERROR] 未知 algo={algo!r}, 仅支持 lgb|xgb|dnn|lr")
 
     with model_file.open("rb") as f:
         return pickle.load(f)
@@ -211,7 +239,12 @@ def main() -> int:
 
     # 3) 推理得违约概率分
     predictor = load_predictor(algo, model_dir)
-    score = np.asarray(predictor.predict_proba(X), dtype=float).ravel()
+    proba = np.asarray(predictor.predict_proba(X), dtype=float)
+    # 二维输出（sklearn 分类器返回 [n,2]，第 1 列为违约概率）取第 1 列；
+    # 一维输出（Booster/DnnPredictor/LrPredictor 已返回违约概率）直接使用
+    if proba.ndim == 2:
+        proba = proba[:, 1]
+    score = proba.ravel()
     if len(score) != len(df):
         raise SystemExit(
             f"[ERROR] 推理输出长度 {len(score)} 与输入 {len(df)} 不一致, 请检查模型/数据对齐。"

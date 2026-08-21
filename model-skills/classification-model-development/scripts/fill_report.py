@@ -78,6 +78,20 @@ def _fmt_auc(x: Any) -> str:
         return "—"
 
 
+def _latest_run_config(session_dir: Path) -> Optional[dict]:
+    """v2.3: 最新 run 的 config.json(按目录名倒序)。无则 None。"""
+    new_models = session_dir / "new-models"
+    if not new_models.is_dir():
+        return None
+    for run_dir in sorted(new_models.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        cfg = _read_json(run_dir / "config.json")
+        if cfg is not None:
+            return cfg
+    return None
+
+
 def _latest_run_splits_dir(session_dir: Path) -> Optional[Path]:
     """v2.1: 找最新 run 内部的即时切分产物目录 new-models/*/data/splits/。
 
@@ -94,6 +108,78 @@ def _latest_run_splits_dir(session_dir: Path) -> Optional[Path]:
         if (splits_dir / "train.parquet").exists():
             candidates.append(splits_dir)
     return candidates[0] if candidates else None
+
+
+def _is_experiments_run(cfg: dict) -> bool:
+    """v2.3: 识别 experiments 矩阵转正 run(config.json.produced_by == skills/model-experiments)。"""
+    return cfg.get("produced_by") == "skills/model-experiments"
+
+
+def _experiments_source_dir(session_dir: Path, cfg: dict) -> Optional[Path]:
+    """定位 experiments 转正 run 的矩阵源格目录: experiments/{source_exp}/。
+
+    experiments 型 run 的 config.json.source_exp 记录 winner/opt 格 id(如 lgb-full-all-v1-opt)。
+    返回该格目录(含 data/、feature_importance.csv、evaluation/);缺失返回 None。
+    """
+    if not _is_experiments_run(cfg):
+        return None
+    source_exp = cfg.get("source_exp") or ""
+    if not source_exp:
+        return None
+    exp_dir = session_dir / "experiments" / source_exp
+    return exp_dir if exp_dir.is_dir() else None
+
+
+def _experiments_split_manifest(session_dir: Path, cfg: dict) -> Optional[dict]:
+    """experiments 型 run 的切分信息: 从矩阵源格 data/{train,val,oot}.parquet 重建。
+
+    experiments 无独立 test 档(开发池=train+test 合并后随机 70/30 切 train/val),
+    以 val 档作为 test 档展示并注明语义, 避免 §IV 回填空档。
+    """
+    exp_dir = _experiments_source_dir(session_dir, cfg)
+    if exp_dir is None:
+        return None
+    data_dir = exp_dir / "data"
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+    split_names = ("train", "val", "oot")
+    splits: Dict[str, dict] = {}
+    total = 0
+    for name in split_names:
+        p = data_dir / f"{name}.parquet"
+        if not p.exists():
+            return None
+        df = pd.read_parquet(p)
+        label_col = "label" if "label" in df.columns else None
+        pos = int(df[label_col].sum()) if label_col else 0
+        rows_n = int(len(df))
+        time_col = None
+        for c in ("f_p_date", "dt", "pday"):
+            if c in df.columns:
+                time_col = c
+                break
+        prange = None
+        if time_col:
+            vals = df[time_col].dropna().astype(str)
+            if len(vals):
+                prange = [str(vals.min()), str(vals.max())]
+        splits[name] = {
+            "rows": rows_n, "pos": pos,
+            "pos_rate": (pos / rows_n) if rows_n else 0.0,
+            "pday_range": prange,
+        }
+        total += rows_n
+    ranges = {name: {"start": splits[name]["pday_range"][0] if splits[name]["pday_range"] else None,
+                     "end": splits[name]["pday_range"][1] if splits[name]["pday_range"] else None}
+              for name in split_names}
+    actual_ratios = {name: (splits[name]["rows"] / total) if total else 0.0 for name in split_names}
+    return {
+        "strategy": "experiments 矩阵(开发池=train+test 合并, seed=42 随机 70/30 切 train/val; test=实验台 val)",
+        "splits": splits, "ranges": ranges, "actual_ratios": actual_ratios,
+        "dropped_rows": 0, "time_col": "f_p_date", "label_col": "label",
+    }
 
 
 def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
@@ -169,18 +255,28 @@ def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
 def build_section_iv(session_dir: Path) -> str:
     """特征宽表段 — 来源: feature-list.csv + 三档切分。
 
-    v2.1 切分后置到 training 消费时即时切分(写 new-models/*/data/splits/),
-    优先从最新 run 的 data/splits/ 重建; 兼容旧 session 的 sample-features/splits/。
+    v2.1 切分后置到 training 消费时即时切分(写 new-models/*/data/splits/)。
+    v2.3 experiments 主链路转正 run 无 run 内部 data/splits/ → 改从 experiments/{source_exp}/
+    矩阵源格的 data/{train,val,oot}.parquet 重建(test 档用实验台 val 表示, 注明语义)。
     """
     dc_dir = session_dir / "sample-features" / "data-cleaning"
     manifest = None
     source_tag = "—"
 
+    # v2.3: 若最新 run 是 experiments 转正 → 从其矩阵源格 data/ 重建切分信息
+    latest_cfg = _latest_run_config(session_dir)
+    if latest_cfg is not None and _is_experiments_run(latest_cfg):
+        exp_manifest = _experiments_split_manifest(session_dir, latest_cfg)
+        if exp_manifest is not None:
+            manifest = exp_manifest
+            source_tag = "experiments 矩阵源格 data/(test=实验台 val)"
+
     # v2.1 新链路: 最新 run 内部的即时切分产物 data/splits/{train,test,oot}.parquet
-    new_splits_dir = _latest_run_splits_dir(session_dir)
-    if new_splits_dir is not None:
-        manifest = _build_split_manifest_from_parquets(new_splits_dir)
-        source_tag = "training 即时切分(run 内部 data/splits)"
+    if not manifest:
+        new_splits_dir = _latest_run_splits_dir(session_dir)
+        if new_splits_dir is not None:
+            manifest = _build_split_manifest_from_parquets(new_splits_dir)
+            source_tag = "training 即时切分(run 内部 data/splits)"
 
     # 旧 session 兼容: sample-features/splits/
     if not manifest:
@@ -192,7 +288,7 @@ def build_section_iv(session_dir: Path) -> str:
     if not manifest:
         return (
             f"{SECTION_ANCHORS['IV'][0]}\n\n"
-            "（特征宽表/切分尚未执行: 无 run 内部 data/splits/ 或 sample-features/splits/）\n"
+            "（特征宽表/切分尚未执行: 无 run 内部 data/splits/ 或 experiments 矩阵源格 data/）\n"
         )
 
     splits = manifest.get("splits", {})
@@ -215,9 +311,15 @@ def build_section_iv(session_dir: Path) -> str:
         "| 集合 | 样本量 | 正样本 | 正样本率 | {col} 范围 |".format(col=time_col),
         "|------|--------|--------|----------|-----------|",
     ]
+    # experiments 型 manifest 的 splits 键为 train/val/oot(无独立 test 档),
+    # 展示时统一映射到 train/test/oot(test = 实验台 val)
+    split_key_map = {"train": "train", "test": "test", "oot": "oot"}
+    if manifest.get("strategy", "").startswith("experiments"):
+        split_key_map = {"train": "train", "test": "val", "oot": "oot"}
     for split_name in ("train", "test", "oot"):
-        s = splits.get(split_name, {})
-        r = ranges.get(split_name, {})
+        key = split_key_map[split_name]
+        s = splits.get(key, {})
+        r = ranges.get(key, {})
         # 兼容两种区间字段名: data-cleaning/data-profile 用 'start'/'end',
         # data-profile split 内也可能用 'pday_range' (列表)
         start = r.get("start") if isinstance(r, dict) else None
@@ -308,7 +410,11 @@ def _feature_importance_lines(fi_path: Optional[Path]) -> list:
 
 
 def _latest_run_feature_importance(session_dir: Path) -> Optional[Path]:
-    """v2.1 兜底: 找最新 run 的 explainability/feature-importance.csv。"""
+    """v2.3 兜底: 找最新 run 的特征重要性 csv。
+
+    - training 型 run: new-models/*/explainability/feature-importance.csv
+    - experiments 型 run: 从其 config.json.source_exp 定位 experiments/{id}/feature_importance.csv
+    """
     new_models = session_dir / "new-models"
     if not new_models.is_dir():
         return None
@@ -318,6 +424,13 @@ def _latest_run_feature_importance(session_dir: Path) -> Optional[Path]:
         p = run_dir / "explainability" / "feature-importance.csv"
         if p.exists():
             return p
+        cfg = _read_json(run_dir / "config.json")
+        if cfg is not None and _is_experiments_run(cfg):
+            exp_dir = _experiments_source_dir(session_dir, cfg)
+            if exp_dir is not None:
+                ep = exp_dir / "feature_importance.csv"
+                if ep.exists():
+                    return ep
     return None
 
 
@@ -340,6 +453,19 @@ def _classify_run(config: dict) -> str:
     produced_by = config.get("produced_by", "")
     runtime = config.get("runtime", {})
     algo = config.get("algo", "?")
+
+    if _is_experiments_run(config):
+        # v2.3: experiments 矩阵转正 run
+        feat_scheme = config.get("feat_scheme") or ""
+        sample_scheme = config.get("sample_scheme") or ""
+        tag = "experiments 矩阵转正"
+        if config.get("is_tuned"):
+            tag += " + Optuna"
+        if config.get("optimistic_bias"):
+            tag += " [乐观偏差候选]"
+        if sample_scheme or feat_scheme:
+            tag += f" ({sample_scheme} × {feat_scheme})"
+        return tag
 
     if "model-tuning" in produced_by:
         if "selection" in runtime:
@@ -380,8 +506,8 @@ def build_section_vi(session_dir: Path) -> str:
         f"{SECTION_ANCHORS['VI'][0]}\n",
         f"共 {len(run_dirs)} 个 run (按目录名排序):",
         "",
-        "| # | run_name | algo | n_feat | train AUC | test AUC | oot AUC | 关键变更 |",
-        "|---|----------|------|--------|-----------|----------|---------|----------|",
+        "| # | run_name | algo | n_feat | train AUC | val AUC | oot AUC | 关键变更 |",
+        "|---|----------|------|--------|-----------|---------|---------|----------|",
     ]
 
     for i, run_dir in enumerate(run_dirs, 1):
@@ -397,6 +523,15 @@ def build_section_vi(session_dir: Path) -> str:
         oot_auc = _fmt_auc(metrics.get("oot", {}).get("auc"))
         n_feat = runtime.get("n_features", "—")
         algo = cfg.get("algo", "?")
+
+        # v2.3: experiments 型 run 的 config.json 用顶层 metrics{oot_auc,val_auc} + features 列表
+        if _is_experiments_run(cfg):
+            top_metrics = cfg.get("metrics", {})
+            val_auc = _fmt_auc(top_metrics.get("val_auc"))
+            oot_auc = _fmt_auc(top_metrics.get("oot_auc"))
+            features = cfg.get("features") or []
+            n_feat = len(features) if features else "—"
+
         change = _classify_run(cfg)
 
         lines.append(
@@ -418,7 +553,8 @@ def build_section_vii(session_dir: Path) -> str:
     if not oot_json:
         return (
             f"{SECTION_ANCHORS['VII'][0]}\n\n"
-            "（session-level 横向对比尚未生成, model-comparison_oot.json 缺失）\n"
+            "（session-level 横向对比尚未生成。experiments 主链路评选用 leaderboard(OOT AUC 排序);"
+            "如需深度对比(分桶/lift/召回/条件格式), 可手动触发 comparison 模块）\n"
         )
 
     auc_cmp = oot_json.get("auc_comparison", {}).get("全量", {})

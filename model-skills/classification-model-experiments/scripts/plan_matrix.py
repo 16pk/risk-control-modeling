@@ -55,7 +55,9 @@ def build_experiment_spec(algo: str, sample_scheme: str, feat_scheme: str, wave:
 
 def build_matrix(algos: List[str], sample_plans: List[Dict],
                  oot_available: bool = True,
-                 max_experiments: int = 12) -> List[Dict]:
+                 max_experiments: int = 12,
+                 feat_select: bool = True,
+                 adversarial: bool = True) -> List[Dict]:
     """构建实验矩阵（波1 all 格 + 波2 importance/iv-psi 格 + 对抗格）。
 
     Args:
@@ -63,6 +65,8 @@ def build_matrix(algos: List[str], sample_plans: List[Dict],
         sample_plans: sample_schemes.decide_sample_schemes 输出
         oot_available: OOT 是否有样本（无 OOT 无对抗/iv-psi 格，仍跑 all/importance）
         max_experiments: 单算法格数上限（含 -opt；默认 12）
+        feat_select: 特征选择开关；False 时跳过波2（importance/iv-psi 格），仅 all 格
+        adversarial: 对抗验证开关；False 时跳过波3 对抗格
 
     Returns:
         specs 列表（含对抗样本格 spec；对抗特征格与 iv-psi 由主流程决定是否并入）。
@@ -76,21 +80,22 @@ def build_matrix(algos: List[str], sample_plans: List[Dict],
                 n_samples=0, n_features=0, plan={"sample_plan_reason": sp.get("reason", "")}))
 
         # 波2：importance（依赖同样本 all 格）+ iv-psi（单格直算）
-        for sp in sample_plans:
-            sample_name = sp["name"]
-            dep = exp_id(algo, sample_name, "all", "v1")
-            specs.append(build_experiment_spec(
-                algo, sample_name, "importance", wave=2, depends_on=dep,
-                plan={"sample_plan_reason": sp.get("reason", "")}))
-        if oot_available:
+        if feat_select:
             for sp in sample_plans:
+                sample_name = sp["name"]
+                dep = exp_id(algo, sample_name, "all", "v1")
                 specs.append(build_experiment_spec(
-                    algo, sp["name"], "iv-psi", wave=2,
+                    algo, sample_name, "importance", wave=2, depends_on=dep,
                     plan={"sample_plan_reason": sp.get("reason", "")}))
+            if oot_available:
+                for sp in sample_plans:
+                    specs.append(build_experiment_spec(
+                        algo, sp["name"], "iv-psi", wave=2,
+                        plan={"sample_plan_reason": sp.get("reason", "")}))
 
         # 对抗格（独立 1 格，不与其余方案交叉；仅 lgb 主跑，xgb 侧不重复）
         # 双产出合并应用：剔除样本（train-vs-oot 概率高分）+ 剔除特征（对抗 total_gain top-K）
-        if algo == "lgb" and oot_available:
+        if adversarial and algo == "lgb" and oot_available:
             specs.append(build_experiment_spec(
                 algo, "adversarial", "adversarial", wave=3,
                 plan={"desc": "对抗验证：lgb train-vs-oot 分类器，双产出(样本剔除+特征剔除)合并应用"}))

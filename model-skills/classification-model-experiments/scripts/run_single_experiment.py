@@ -9,7 +9,8 @@
   ├── feature_importance.csv
   ├── scripts/train.py         # 训练代码快照（train_template.py 副本 + code_sha256）
   ├── logs/run.log
-  └── data/                    # 训练输入快照（复现用：train/val/oot.parquet + features/params/weights.json）
+  └── data/                    # Optuna 依赖（轻量）：features.json + params.json + weights.csv
+                               # （v2.6.1 起不再落盘 train/val/oot.parquet，调优时运行时重切）
 """
 from __future__ import annotations
 
@@ -77,24 +78,23 @@ def load_training_code(exp_dir: str, template_path: str,
     return _sha256(target), template_version, False
 
 
-def _save_inputs(exp_dir: str, train: pd.DataFrame, val: pd.DataFrame,
-                 oot: pd.DataFrame, features: List[str], params: Dict,
-                 weight: Optional[np.ndarray], label_col: str) -> None:
-    """训练输入快照落盘（复现用）。
+def _save_inputs(exp_dir: str, features: List[str], params: Dict,
+                 weight: Optional[np.ndarray]) -> None:
+    """轻量输入快照落盘（Optuna 依赖）：features.json + params.json + weights.csv。
 
-    label 列统一重命名为 `label`（tune_winner 按固定列名消费快照，同一基线可比）。
+    注意（v2.6.1 方案 A）：**不落盘 train/val/oot.parquet**。
+    切分可复现（seed=42 固定 + 纯确定性），Optuna 调优阶段由调用方运行时重切，
+    避免每格冗余存储完整数据副本。weights.csv 仅当存在样本权重时写入。
     """
     data_dir = os.path.join(exp_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
-    for name, df_ in (("train", train), ("val", val), ("oot", oot)):
-        snap = df_.rename(columns={label_col: "label"}) if label_col != "label" else df_.copy()
-        snap.to_parquet(os.path.join(data_dir, f"{name}.parquet"), index=False)
     with open(os.path.join(data_dir, "features.json"), "w", encoding="utf-8") as f:
         json.dump(features, f, ensure_ascii=False, indent=2)
     with open(os.path.join(data_dir, "params.json"), "w", encoding="utf-8") as f:
         json.dump(params, f, ensure_ascii=False, indent=2, default=str)
     if weight is not None:
         pd.Series(weight).to_csv(os.path.join(data_dir, "weights.csv"), index=False, header=["weight"])
+    # 不再落盘 train/val/oot.parquet（省空间：矩阵 N 格 × 3 份 parquet → 删）
 
 
 def run_experiment(
@@ -157,9 +157,14 @@ def run_experiment(
         if sample_scheme is None:
             sample_scheme = ss.full_scheme(dev)
         filtered = ss.apply_sample_scheme(sample_scheme, dev)
-        weight = np.asarray(sample_scheme["weight"], dtype=float)
+        # 重置索引 + 权重按过滤掩码对齐（过滤后行位置 ↔ 权重位置一一对应）
+        filt_mask = np.asarray(sample_scheme["filter"], dtype=bool)
+        weight = np.asarray(sample_scheme["weight"], dtype=float)[filt_mask]
+        filtered = filtered.reset_index(drop=True)
         if len(filtered) == 0:
             return _fail("样本方案过滤后为空")
+        if len(weight) != len(filtered):
+            return _fail("权重与过滤后样本长度不一致: weight=%d filtered=%d" % (len(weight), len(filtered)))
     except Exception as e:
         return _fail("样本方案失败: %r" % e)
 
@@ -288,7 +293,7 @@ def run_experiment(
         with open(os.path.join(model_dir, "model_meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         result["importance"].to_csv(os.path.join(exp_dir, "feature_importance.csv"), index=False)
-        _save_inputs(exp_dir, train_df, val_df, oot, features, result["params"], w_train, label_col)
+        _save_inputs(exp_dir, features, result["params"], w_train)
     except Exception as e:
         return _fail("落盘失败: %r" % e)
 

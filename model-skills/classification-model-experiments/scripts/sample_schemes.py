@@ -86,7 +86,7 @@ def adversarial_filter_scheme(dev: pd.DataFrame, drop_mask: np.ndarray,
         "sample_scheme": "adversarial",
         "filter": ~drop_mask,
         "weight": np.ones(len(dev), dtype=float),
-        "meta": meta or {"desc": "对抗验证剔除分布差异最大样本"},
+        "meta": meta or {"desc": "对抗验证剔除最不像 OOT 的样本（保留与未来分布接近的样本）"},
     }
 
 

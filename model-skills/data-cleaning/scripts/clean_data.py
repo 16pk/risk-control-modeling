@@ -7,7 +7,7 @@
         --session-dir <session_dir> \
         --id-col fuid \
         --dt-col f_p_date \
-        --label-col label \
+        [--label-col label] \
         [--invalid-values -1,-2,-999,-9999] \
         [--feature-list-source model-knowledge/.../xxx.csv] \
         [--auto-confirm]
@@ -68,8 +68,8 @@ def read_sample(input_path: str) -> pd.DataFrame:
     )
 
 
-def _validate_columns(df: pd.DataFrame, id_col: str, dt_col: str, label_col: str) -> None:
-    """校验 id/dt/label 三列均存在。"""
+def _validate_columns(df: pd.DataFrame, id_col: str, dt_col: str, label_col: Optional[str]) -> None:
+    """校验 id/dt(label 可选)列均存在: label_col 为 None 或空时跳过。"""
     missing = [c for c in (id_col, dt_col, label_col) if c and c not in df.columns]
     if missing:
         raise ValueError(f"以下列不在样本中: {missing}")
@@ -119,7 +119,7 @@ def clean_data(
     session_dir: str,
     id_col: str,
     dt_col: str,
-    label_col: str,
+    label_col: Optional[str] = None,
     invalid_values: Optional[list] = None,
     feature_list_source: Optional[str] = None,
     auto_confirm: bool = False,
@@ -132,7 +132,7 @@ def clean_data(
         session_dir: session 目录(产物落 <session_dir>/sample-features/data-cleaning/)
         id_col: 用户粒度 ID 列(数据探查自主识别 + 用户确认后传入)
         dt_col: 日期分区列
-        label_col: 标签列
+        label_col: 标签列(可选; 无标签场景传 None)
         invalid_values: 哨兵值集合; None 时用 DEFAULT_INVALID_VALUES
         feature_list_source: 可选, 特征清单过滤文件(派生 feature-list.csv 时取交集)
         auto_confirm: True 跳过异常值交互确认
@@ -252,7 +252,7 @@ def main() -> None:
     p.add_argument("--session-dir", required=True, help="session 目录 (runs/<timestamp>-<model_name>)")
     p.add_argument("--id-col", required=True, help="用户粒度 ID 列名")
     p.add_argument("--dt-col", required=True, help="日期分区列名")
-    p.add_argument("--label-col", required=True, help="标签列名")
+    p.add_argument("--label-col", default=None, help="标签列名(可选; 无标签场景可不传)")
     p.add_argument(
         "--invalid-values",
         default=None,

@@ -49,6 +49,37 @@ def test_no_oot_skips_iv_psi_and_adversarial():
     assert not any(s["wave"] == 3 for s in specs)
 
 
+def test_feat_select_false_skips_wave2():
+    specs = pm.build_matrix(["lgb"], _sample_plans(), oot_available=True,
+                            feat_select=False)
+    assert not any(s["wave"] == 2 for s in specs)
+    assert not any(s["feat_scheme"] in ("importance", "iv-psi") for s in specs)
+    # 波1 all 格与对抗格保留
+    assert any(s["feat_scheme"] == "all" for s in specs)
+    assert any(s["wave"] == 3 for s in specs)
+    assert len(specs) == 4  # 3 个 all 格 + 1 对抗格
+
+
+def test_adversarial_false_skips_wave3():
+    specs = pm.build_matrix(["lgb", "xgb"], _sample_plans(), oot_available=True,
+                            adversarial=False)
+    assert not any(s["wave"] == 3 for s in specs)
+    assert not any("adversarial" in s["feat_scheme"] for s in specs)
+    # 波2 importance/iv-psi 仍在
+    assert any(s["feat_scheme"] == "importance" for s in specs)
+    assert any(s["feat_scheme"] == "iv-psi" for s in specs)
+    # (3 样本方案 × 3 特征方案) × 2 算法 = 18 格
+    assert len(specs) == 18
+
+
+def test_all_switches_off_minimal_matrix():
+    # 全关：仅 1 算法 × 1 样本方案(full) × 1 特征方案(all) = 1 格
+    specs = pm.build_matrix(["lgb"], [{"name": "full", "n_months": None, "reason": "r"}],
+                            oot_available=True, feat_select=False, adversarial=False)
+    assert len(specs) == 1
+    assert specs[0]["id"] == "lgb-full-all-v1"
+
+
 def test_budget_limit():
     with pytest.raises(ValueError):
         pm.build_matrix(["lgb"], _sample_plans(), oot_available=True, max_experiments=2)

@@ -1,16 +1,20 @@
 ---
 name: classification-model-comparison
-description: 多模型标准化评估横向对比——输入多个模型的标准化评估 JSON，对 oot 和 all 两档分别做 N-way 全维度对比（AUC、KS、分桶标签率/lift/召回率/累计召回），输出含条件格式的 Excel 报告与 delta 分析。由 classification-model-development 统一编排调用。当用户说"模型对比""对比评估""哪个模型更好""新旧对比""多版本对比""横向对比"时使用。
+description: 多模型标准化评估横向对比——输入多个模型的标准化评估 JSON，对 oot 和 all 两档分别做 N-way 全维度对比（AUC、KS、分桶标签率/lift/召回率/累计召回），输出含条件格式的 Excel 报告与 delta 分析。由 classification-model-development 统一编排调用。**v2.3 起为可选深度对比**：experiments（主链路默认训练）的 leaderboard 承担日常 OOT AUC 评选，本模块仅在用户主动要求分桶/lift/召回/条件格式深度对比时由 development 调度；experiments 转正 run 默认不产 eval_single JSON，需先对需要对比的格跑 `eval_single.py` 或提供对应 JSON。当用户说"模型对比""对比评估""哪个模型更好""新旧对比""多版本对比""横向对比""深度对比"时使用。
 ---
 
 # 模型对比
+
+> ⚠️ **v2.3 可选深度对比**：主链路默认用 experiments leaderboard（OOT AUC 排序）评选；
+> 本模块提供分桶/lift/召回/条件格式等深度对比，仅在用户主动要求时由 `classification-model-development` 调度。
+> experiments 转正 run 默认不产 eval_single JSON，需先对需要对比的格跑 `eval_single.py` 或提供对应 JSON。
 
 ## 1. 输入依赖
 
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
-| oot eval JSON（≥2 份） | ✅ | `classification-model-training` 内嵌 `eval_single.py` 产出的 `*_oot_eval.json` | 同数据、同客群、同指标口径 |
-| all eval JSON（≥2 份） | ✅ | `classification-model-training` 内嵌 `eval_single.py` 产出的 `*_all_eval.json`（`--input-dir` 模式自动产出）| 同数据、同客群、同指标口径 |
+| oot eval JSON（≥2 份） | ✅ | 训练侧产出的 `*_oot_eval.json`：备用路径 `classification-model-training` 内嵌 `eval_single.py`；experiments 格可用 `eval_single.py` 对 winner/opt 格跑出 | 同数据、同客群、同指标口径 |
+| all eval JSON（≥2 份） | ✅ | 同上（`--input-dir` 模式自动产出） | 同数据、同客群、同指标口径 |
 
 **前置约束**：对比必须在相同数据集、相同客群、相同指标口径上进行；不对比在不同测试集上评估的模型。
 

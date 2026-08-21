@@ -7,13 +7,17 @@
 
 用法：
   python3 feature_analysis.py --data-file ka_df.feather \\
-      --feature-start tx_model_2_score --feature-end mob4_v5_score \\
+      --feature-list feature-list.csv \\
       --feature-extra ascore_fpd7_v3 \\
       --base-month 2025-04 --iv-label fpd7 \\
       --output-dir <产物目录>
 
 支持 .feather / .csv / .parquet（按扩展名自动选读取方式）。
 产物：Excel + Markdown + _manifest.json（参数溯源），落 --output-dir（默认当前目录）。
+
+特征列来源（v2.5 修复）：主入口 --feature-list（精确选列，与全框架特征清单唯一真相一致）；
+无清单时回退 --feature-start/--feature-end 区间法（DEPRECATED，独立体检模式兼容），
+两者均缺报错提示迁移。
 
 pipeline 模式（--split-config <feature_config.yaml>）：
   - 本 skill 是建模 pipeline 内部的特征分析环节（development Stage 0）。
@@ -29,6 +33,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import _bootstrap  # noqa: F401  注入 _modelevo-shared/scripts（gen_feature_list 等共享模块）
 
 import pandas as pd
 import numpy as np
@@ -68,12 +74,15 @@ def parse_args():
     ap.add_argument("--output-dir", default=DEFAULTS["output_dir"],
                     help="产物（Excel + Markdown + _manifest.json）输出目录，默认当前目录")
     ap.add_argument("--time-col", default=DEFAULTS["time_col"])
+    ap.add_argument("--feature-list", default=None,
+                    help="特征清单 CSV/TXT 路径（CSV 取 feature_name 列 / TXT 按行）；提供时精确选列，"
+                         "替代 --feature-start/--feature-end 区间法（区间法已弃用，独立体检模式兼容保留）")
     ap.add_argument("--feature-start", default=DEFAULTS["feature_start"],
-                    help="特征列范围的起始列名")
+                    help="[DEPRECATED] 特征列范围的起始列名；--feature-list 提供时忽略")
     ap.add_argument("--feature-end", default=DEFAULTS["feature_end"],
-                    help="特征列范围的结束列名")
+                    help="[DEPRECATED] 特征列范围的结束列名；--feature-list 提供时忽略")
     ap.add_argument("--feature-extra", default=DEFAULTS["feature_extra"],
-                    help="额外特征列名，逗号分隔")
+                    help="额外特征列名，逗号分隔（两种来源均追加）")
     ap.add_argument("--base-month", default=None,
                     help="PSI 基准月份，格式 YYYY-MM；pipeline 模式未指定时默认取第一个 OOT 月")
     ap.add_argument("--split-config", default=None,
@@ -130,18 +139,39 @@ def load_and_prepare(args):
     df["month"] = df[args.time_col].dt.to_period("M").astype(str)
     months = sorted(df["month"].unique())
 
-    # 特征列
+    # 特征列：--feature-list 精确选列（主入口）→ 未提供时区间法（DEPRECATED，独立体检兼容）
     cols = df.columns.tolist()
-    if args.feature_start not in cols or args.feature_end not in cols:
-        raise KeyError(
-            f"特征区间列不存在: start={args.feature_start!r}, end={args.feature_end!r}。"
-            f"请从数据列中重新指定（前10列: {cols[:10]}...）"
+    feature_source = "feature-list"
+    feature_list_missing = []
+    if args.feature_list:
+        try:
+            from gen_feature_list import load_feature_list
+
+            list_feat = load_feature_list(args.feature_list)
+        except Exception as e:
+            raise ValueError(f"读取 --feature-list 失败: {args.feature_list!r}: {e}")
+        feature_cols = [c for c in list_feat if c in df.columns]
+        # 清单中缺失的列仅 WARN（容忍列漂移），不报错
+        feature_list_missing = [c for c in list_feat if c not in df.columns]
+        if feature_list_missing:
+            print(f"  ⚠ 特征清单 {len(feature_list_missing)} 列不在样本中（列漂移，已忽略）: "
+                  f"{', '.join(feature_list_missing[:20])}")
+        if not feature_cols:
+            raise ValueError(
+                f"特征清单无任何列存在于样本: {args.feature_list!r}"
+            )
+    elif args.feature_start in cols and args.feature_end in cols:
+        feature_source = "interval"
+        start_idx = cols.index(args.feature_start)
+        end_idx = cols.index(args.feature_end)
+        if start_idx > end_idx:
+            raise ValueError(f"起始列在结束列之后: {args.feature_start} 出现在 {args.feature_end} 之后")
+        feature_cols = cols[start_idx : end_idx + 1]
+    else:
+        raise ValueError(
+            "特征列来源缺失：请提供 --feature-list（推荐主入口）或 --feature-start/--feature-end"
+            "（DEPRECATED 区间法，独立体检兼容）；两者均未提供时无法确定特征范围"
         )
-    start_idx = cols.index(args.feature_start)
-    end_idx = cols.index(args.feature_end)
-    if start_idx > end_idx:
-        raise ValueError(f"起始列在结束列之后: {args.feature_start} 出现在 {args.feature_end} 之后")
-    feature_cols = cols[start_idx : end_idx + 1]
     if args.feature_extra:
         for extra in args.feature_extra.split(","):
             extra = extra.strip()
@@ -174,11 +204,13 @@ def load_and_prepare(args):
     if invalid_values:
         print(f"  无效值哨兵集合: {invalid_values}")
 
+    print(f"  特征来源: {feature_source}（{'清单' if feature_source == 'feature-list' else '区间法'}"
+          f"，共 {len(feature_cols)} 特征，清单缺失 {len(feature_list_missing)} 列）")
     print(f"  特征数: {len(feature_cols)}")
     print(f"  风险标签: {risk_labels}")
     print(f"  月份: {months}")
     print(f"  样本量: {len(df):,}")
-    return df, months, feature_cols, risk_labels, iv_label, invalid_values
+    return df, months, feature_cols, risk_labels, iv_label, invalid_values, feature_source, feature_list_missing
 
 
 # ============================================================
@@ -487,7 +519,8 @@ def write_excel(output_file, risk_labels, months,
 # ============================================================
 def write_markdown(output_file, args, months, feature_cols, risk_labels,
                    sample_total_df, sample_overdue_df, sample_rate_df,
-                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df):
+                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df,
+                   feature_source="interval", feature_list_missing=()):
     print("[3.5/4] 写入 Markdown 报告...")
     lines = []
     lines.append("# 信贷特征分析报告")
@@ -496,6 +529,10 @@ def write_markdown(output_file, args, months, feature_cols, risk_labels,
     lines.append(f"> 时间列: `{args.time_col}` ｜ PSI 基准月: `{args.base_month}` ｜ IV 标签: `{args.iv_label or '（自动）'}`")
     if args.split_config:
         lines.append(f"> pipeline 模式: `{args.split_config}`（PSI 基准月 = 第一个 OOT 月，须用户确认）")
+    if args.feature_list:
+        lines.append(f"> 特征来源: 特征清单 `{args.feature_list}`（命中 {len(feature_cols)} 列，清单缺失 {len(feature_list_missing)} 列）")
+    else:
+        lines.append("> 特征来源: 区间法（DEPRECATED，独立体检模式兼容）")
     lines.append(f"> 样本量: `{int(sample_total_df.values.sum() if sample_total_df.size else 0):,}` ｜ 月份: `{months[0]}` ~ `{months[-1]}`（{len(months)} 个月）")
     lines.append("")
 
@@ -584,26 +621,34 @@ def write_markdown(output_file, args, months, feature_cols, risk_labels,
 # ============================================================
 # 5. 落盘 manifest（参数溯源，供复现与追溯）
 # ============================================================
-def write_manifest(output_dir: Path, files: list, args) -> None:
+def write_manifest(output_dir: Path, files: list, args, feature_source="interval",
+                   feature_list_missing=()) -> None:
+    params = {
+        "data_file": args.data_file,
+        "feature_extra": args.feature_extra,
+        "feature_source": feature_source,
+        "base_month": args.base_month,
+        "split_config": args.split_config,
+        "iv_label": args.iv_label,
+        "time_col": args.time_col,
+        "risk_prefixes": args.risk_prefixes,
+        "risk_labels": args.risk_labels,
+        "psi_bins": args.psi_bins,
+        "iv_bins": args.iv_bins,
+        "invalid_values": args.invalid_values,
+    }
+    if args.feature_list:
+        params["feature_list"] = args.feature_list
+        params["feature_list_missing"] = list(feature_list_missing)
+    else:
+        # 兼容保留（区间法 DEPRECATED）
+        params["feature_start"] = args.feature_start
+        params["feature_end"] = args.feature_end
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "produced_by": PRODUCED_BY,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "params": {
-            "data_file": args.data_file,
-            "feature_start": args.feature_start,
-            "feature_end": args.feature_end,
-            "feature_extra": args.feature_extra,
-            "base_month": args.base_month,
-            "split_config": args.split_config,
-            "iv_label": args.iv_label,
-            "time_col": args.time_col,
-            "risk_prefixes": args.risk_prefixes,
-            "risk_labels": args.risk_labels,
-            "psi_bins": args.psi_bins,
-            "iv_bins": args.iv_bins,
-            "invalid_values": args.invalid_values,
-        },
+        "params": params,
         "files": sorted(files),
     }
     (output_dir / "_manifest.json").write_text(
@@ -616,7 +661,8 @@ def write_manifest(output_dir: Path, files: list, args) -> None:
 # ============================================================
 def main():
     args = parse_args()
-    df, months, feature_cols, risk_labels, iv_label, invalid_values = load_and_prepare(args)
+    (df, months, feature_cols, risk_labels, iv_label, invalid_values,
+     feature_source, feature_list_missing) = load_and_prepare(args)
     # PSI 基准月：pipeline 模式默认取第一个 OOT 月（须用户确认），显式 --base-month 覆盖
     args.base_month = resolve_base_month(args, months)
     results = compute_all(df, months, feature_cols, risk_labels, iv_label, invalid_values, args)
@@ -632,8 +678,10 @@ def main():
                 feat_dist_df, monthly_results, psi_df, iv_df, invalid_df)
     write_markdown(output_file, args, months, feature_cols, risk_labels,
                    sample_total_df, sample_overdue_df, sample_rate_df,
-                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df)
-    write_manifest(out_dir, [args.output_file, Path(args.output_file).with_suffix(".md").name], args)
+                   feat_dist_df, monthly_results, psi_df, iv_df, invalid_df,
+                   feature_source=feature_source, feature_list_missing=feature_list_missing)
+    write_manifest(out_dir, [args.output_file, Path(args.output_file).with_suffix(".md").name],
+                   args, feature_source=feature_source, feature_list_missing=feature_list_missing)
 
     print("[4/4] 完成!")
     print(f"  输出文件: {output_file}")

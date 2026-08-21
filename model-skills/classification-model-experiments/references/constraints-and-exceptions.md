@@ -104,5 +104,10 @@ M = 施加样本方案后切分出的训练段样本数，S = 安全过滤+特�
 - 权威模板 `scripts/templates/train_template.py`（**自包含**：不依赖本 skill 其他模块）。
 - 每格开始时复制进 `<exp_dir>/scripts/train.py`，manifest 记 `code_sha256` + `template_version`。
 - 默认全格同代码；AI 定制某格 → 逐格 fork `scripts/train.py`，manifest 记 `code_modified=true`。
-- 复现 = 重跑实验目录代码（快照目录自带 `data/` 输入快照，全录入 `train/val/oot.parquet` +
-  `features.json` + `params.json` + `weights.csv`）。
+- 复现 = 重跑实验目录代码 + 依赖上游 `sample.parquet` + `model.split`（seed=42 纯确定性切分）。
+  **v2.6.1（方案 A）起不再落盘 `data/train|val|oot.parquet`**（省空间：矩阵 N 格 × 3 份 parquet → 删）；
+  `data/` 仅保留 `features.json` + `params.json` + `weights.csv` 作为 Optuna 调优的轻量依赖。
+  - Optuna 调优（-opt 格）：主流程按 winner 的样本方案运行时重切 dev/oot（full/recent/timeweight
+    直接 `_scheme_for`；adversarial 从 `adversarial_meta.json` 取剔除比例重训对抗分类器重建），
+    与 winner 完全同基线；不再依赖快照落盘。
+  - 旧目录（v2.6.1 之前）若含完整 `data/` 快照，`tune_winner` 自动回退读取（`_load_winner_inputs_legacy`）。

@@ -1,10 +1,11 @@
 {
   "name": "risk-control-modeling",
-  "version": "2.2.0",
-  "description": "Interactive end-to-end credit risk modeling expert: requirement clarification, data cleaning, credit feature analysis (monthly PSI/IV), tree-model development & evaluation (XGBoost/LightGBM/DNN/LR, AUC/KS/PSI), default model scoring, and on-demand FICO/business reports — with a single orchestrator, split deferred to training-time, unified shared metrics, and key decisions confirmed by the user.",
+  "version": "2.6.1",
+  "description": "Interactive end-to-end credit risk modeling expert: requirement clarification, feature-column classification (semantic 3-way with user bulk confirmation, authoritative feature-list), data cleaning, credit feature analysis (monthly PSI/IV), experiment-matrix model development (lgb/xgb orthogonal sample×feature matrix + adversarial validation + rule-based diagnosis + Optuna tuning + promotion, AUC/KS/PSI), default model scoring, on-demand FICO/business reports, and packaging a finalized model into a standalone deliverable package — with a single orchestrator, split consumed from model.split, unified shared metrics, and key decisions confirmed by the user.",
   "agents": ["./agents/risk-control-modeling.md"],
   "skills": [
     "./model-skills/model-knowledge",
+    "./model-skills/feature-classification",
     "./model-skills/data-cleaning",
     "./model-skills/credit-data-analysis",
     "./model-skills/classification-model-task-spec",
@@ -13,6 +14,7 @@
     "./model-skills/classification-model-tuning",
     "./model-skills/classification-model-experiments",
     "./model-skills/classification-model-comparison",
+    "./model-skills/classification-model-package",
     "./model-skills/credit-model-report",
     "./model-skills/score-to-fico",
     "./model-skills/model-scoring"
@@ -30,8 +32,8 @@
     "zh": "信贷风控建模专家"
   },
   "displayDescription": {
-    "en": "End-to-end credit risk modeling: requirement clarification, data cleaning, feature analysis, tree-model development & evaluation, and default model scoring — a single orchestrator with split deferred to training-time, unified shared metrics, and interactive confirmation at key steps. Deployment-ready models.",
-    "zh": "专注信贷风控建模全流程：需求澄清、数据清洗、特征分析、模型训练调优与评估、定版默认打分。单一调度者编排、切分后置到训练消费时、指标计算统一共享，关键环节交互确认，产出可上线模型。"
+    "en": "End-to-end credit risk modeling: requirement clarification, data cleaning, feature analysis, experiment-matrix training (lgb/xgb orthogonal matrix + adversarial validation + rule diagnosis + Optuna tuning), and default model scoring — a single orchestrator, unified shared metrics, and interactive confirmation at key steps. Deployment-ready models.",
+    "zh": "专注信贷风控建模全流程：需求澄清、数据清洗、特征分析、实验矩阵训练调优（lgb/xgb 样本×特征正交 + 对抗验证 + 规则诊断 + Optuna 调优）、定版默认打分。单一调度者编排、指标计算统一共享，关键环节交互确认，产出可上线模型。"
   },
   "avatar": "avatars/expert.png",
   "categoryId": "08-FinanceInvestment",
@@ -47,7 +49,7 @@
   ],
   "quickPrompts": [
     { "en": "Build a credit risk model from this dataset — confirm target and train/test/OOT window before executing", "zh": "帮我基于这份信贷数据构建风控模型，目标与切分窗口先确认再执行" },
-    { "en": "Run data cleaning and feature analysis, then train a baseline model", "zh": "先做数据清洗和特征分析，再训练 baseline 模型" },
-    { "en": "Train and tune a tree model — confirm hyperparameters and the train/test/OOT window split first", "zh": "训练并调优一个树模型，超参数和训练窗口划分先给我确认" }
+    { "en": "Run data cleaning and feature analysis, then run an experiment matrix (lgb/xgb) and promote the winner", "zh": "先做数据清洗和特征分析，再跑实验矩阵（lgb/xgb）并转正胜出模型" },
+    { "en": "Run an experiment matrix with adversarial validation and rule diagnosis + Optuna tuning — confirm matrix plan first", "zh": "跑实验矩阵（含对抗验证、规则诊断 + Optuna 调优），矩阵方案先给我确认" }
   ]
 }

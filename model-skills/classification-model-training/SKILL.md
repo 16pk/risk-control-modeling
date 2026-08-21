@@ -1,9 +1,12 @@
 ---
 name: classification-model-training
-description: 端到端训练 xgboost/dnn/lr 二分类模型——读上游 data-cleaning 产出的 sample.parquet + model.split，在训练消费时即时切分为 train/test/oot 三档（不落盘 session 级 splits），产八阶段产物(features/model/evaluation/predictions/explainability/comparison/logs/config)，并与历史 baseline 做 AUC/KS/分档多维对比。本 skill 不取数，切分后置到消费时即时进行。当用户说"建模""训练新模型""跑模型""对比base""迭代模型"时使用。
+description: 端到端训练 xgboost/dnn/lr 二分类模型——读上游 data-cleaning 产出的 sample.parquet + model.split，在训练消费时即时切分为 train/test/oot 三档（不落盘 session 级 splits），产八阶段产物(features/model/evaluation/predictions/explainability/comparison/logs/config)，并与历史 baseline 做 AUC/KS/分档多维对比。本 skill 不取数，切分后置到消费时即时进行。**v2.3 起为备用路径**：主链路默认训练已切换至 classification-model-experiments（lgb/xgb 实验矩阵），本模块仅在用户明确要求单模型训练（含 dnn/lr 评分卡）时由 development 主动调度。当用户说"训练 dnn/lr 模型""训练评分卡""单模型训练"时使用。
 ---
 
 # classification-model-training
+
+> ⚠️ **v2.3 备用路径**：主链路默认训练已切换至 `classification-model-experiments`（lgb/xgb 实验矩阵）。
+> 本模块保留完整能力（含 DNN/LR 评分卡），仅在用户明确要求单模型训练时由 `classification-model-development` 调度，不进入默认编排。
 
 训练为进程内实现(xgboost / dnn / lr),按 `model.algo` 切换;由 `scripts/run_build.py` 编排。
 共享配置读写代码位于 `model-skills/_modelevo-shared/scripts/`(config_io),通过 `scripts/_bootstrap.py` 注入。

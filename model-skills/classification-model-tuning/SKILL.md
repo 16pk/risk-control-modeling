@@ -1,9 +1,12 @@
 ---
 name: classification-model-tuning
-description: 对 classification-model-training 的 baseline run 做超参调优（run_tuning.py：规则诊断 / 可选 Optuna 搜索）或特征筛选（select_features.py：按 PSI/IV/缺失率剔除特征），产 `-tuned` / `-feat` 新 run，按 baseline.algo 直通 xgb/dnn/lr。当用户说"调优""调参""优化模型""超参搜索""欠拟合""过拟合""不收敛""特征筛选""剔除高 PSI 特征""剔除低 IV 特征""剔除高缺失特征""缩小特征集"时使用。
+description: 对 classification-model-training 的 baseline run 做超参调优（run_tuning.py：规则诊断 / 可选 Optuna 搜索）或特征筛选（select_features.py：按 PSI/IV/缺失率剔除特征），产 `-tuned` / `-feat` 新 run，按 baseline.algo 直通 xgb/dnn/lr。**v2.3 起为备用路径**：规则诊断逻辑已移植至 classification-model-experiments（diagnose_winner，主链路 Optuna 前执行并驱动搜索锚点），本模块仅在用户明确要求基于 training run 调参/筛选时由 development 主动调度。当用户说"调优""调参""优化模型""超参搜索""欠拟合""过拟合""不收敛""特征筛选""剔除高 PSI 特征""剔除低 IV 特征""剔除高缺失特征""缩小特征集"时使用。
 ---
 
 # classification-model-tuning
+
+> ⚠️ **v2.3 备用路径**：规则诊断已并入 `classification-model-experiments`（`diagnose_winner` / `recommend_winner`，主链路默认在 Optuna 前执行）。
+> 本模块保留完整能力，仅在用户明确要求基于 training run 调参/特征筛选时由 `classification-model-development` 调度，不进入默认编排。
 
 ## 1. 输入依赖
 
