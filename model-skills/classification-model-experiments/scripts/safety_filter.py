@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""安全过滤（内聚本模块，不 import training 的 boundary_filter）。
+"""安全过滤（内聚本模块，独立实现）。
 
 只做安全过滤，不做 IV/PSI 指标筛选（训练过程不通过 IV/PSI 筛特征）：
   1. 常量特征（nunique <= 1 或全 NaN）
@@ -8,8 +8,7 @@
   4. 全缺失特征（缺失率 >= missing_threshold，默认 0.95）
   5. 数据安全红线（复用 config_io.check_sensitive 拦截身份证/手机号列名）
 
-数据直算（filter_boundary_features_from_df），语义与 training 的 boundary_filter 对齐但独立实现，
-禁跨 skill import。
+数据直算（filter_boundary_features_from_df），禁跨 skill import。
 """
 from __future__ import annotations
 

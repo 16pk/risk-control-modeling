@@ -14,7 +14,7 @@ description: 模型知识库 skill。沉淀建模过程中的业务领域知识�
 | 业务领域知识 | `assets/business-domain-knowledge/business-domain-knowledge.md` | 业务字段语义、客群标签、用户状态、常用分析指标 | 建模任务启动时默认加载 |
 | 特征知识 | `assets/feature-knowledge/feature-knowledge.md` | 各业务域特征宽表与特征清单（`feature-list/*.csv`） | `data-cleaning` 选特征时（训练不通过 IV/PSI 筛特征） |
 | 历史模型知识 | `assets/historical-model-knowledge/historical-model-knowledge.md` | 模型台账 `model_catalog.csv` + 模型报告 `reports/` | 建模时检索历史模型复用 / 归档时更新 |
-| 建模经验知识 | `assets/modeling-experience-knowledge/modeling-experience-knowledge.md` | 方法论、调参经验、踩坑记录 | training / tuning 阶段参考；建模完成后归档 |
+| 建模经验知识 | `assets/modeling-experience-knowledge/modeling-experience-knowledge.md` | 方法论、调参经验、踩坑记录 | experiments 阶段参考；建模完成后归档 |
 
 ## 目录结构
 
@@ -70,5 +70,5 @@ model-knowledge/
 - 报告落盘前脱敏：不含用户 ID、手机号、身份证号等明细数据，仅保留聚合统计与指标。
 
 ## 关联 skill
-- 上游：`classification-model-development` / `classification-model-comparison`（归档来源）
+- 上游：`classification-model-development`（归档来源）
 - 下游：`classification-model-task-spec`、`data-cleaning`、`credit-data-analysis`（检索复用）

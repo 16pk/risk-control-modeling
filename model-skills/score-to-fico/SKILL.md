@@ -81,7 +81,7 @@ python <skill_dir>/scripts/score_to_fico.py \
 |---|---|---|
 | `classification-model-development` | **编排调起（Stage 6，可选）** | 收口后仅用户主动要求时转 FICO |
 | `model-scoring` | 上游（Stage 5） | 产 `scoring/score_sample.parquet`（本 skill 输入，含 `score` + `label`） |
-| `classification-model-training`（内嵌评估） | 评估口径 | 转分后可用 `bscore` 替换 `score` 重跑评估 |
+| `classification-model-experiments`（评估） | 评估口径 | 转分后可用 `bscore` 替换 `score` 重跑评估 |
 | `credit-model-report` | 下游可选 | FICO 产物独立落盘；报告纳入 fico 为后续版本规划（当前不消费） |
 | `model-knowledge` | 归档 | `coef.json` + fitting-summary 随 session 归档，台账记录模型已校准参数 |
 

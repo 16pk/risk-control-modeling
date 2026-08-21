@@ -22,8 +22,8 @@
   - 纯拷贝模板: package_templates/ 下脚本即交付包内最终脚本, 打包器只做 shutil.copy
     (仅 requirements.txt 与 README.md 做字符串渲染); 模板与单测共享同一份源码。
   - 独立运行: 交付包零引用专家包目录与 _modelevo-shared。
-  - 算法边界: 仅支持主链路产物 lgb/xgb(含 xgb 历史 model.json); dnn/lr 无法在自包含
-    包内反序列化(DnnPredictor/LrPredictor 需 training 脚本依赖), 报错拒绝。
+  - 算法边界: 仅支持主链路产物 lgb/xgb(含 xgb 历史 model.json); 其他算法报错拒绝
+    (dnn/lr 能力已随 training 模块于 v2.7 移除)。
 
 用法:
   python package_model.py --session-dir <session_dir> [--out-dir <delivery 目录>]
@@ -101,7 +101,7 @@ def validate_model_assets(model_dir: Path) -> tuple[str, list]:
     if algo not in SUPPORTED_ALGOS:
         _err(
             f"定版模型 algo={algo!r} 不在交付包支持范围({SUPPORTED_ALGOS})。"
-            "自包含交付包无法携带 dnn/lr 反序列化所需的 training 脚本依赖, 请走主链路(lgb/xgb)。"
+            "交付包仅支持主链路 lgb/xgb 产物。"
         )
     has_pkl = (model_dir / "model.pkl").exists()
     has_json = (model_dir / "model.json").exists()

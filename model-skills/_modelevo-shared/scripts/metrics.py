@@ -2,8 +2,8 @@
 """统一指标计算库（v2.1 精简重构新增）。
 
 统一全仓库 PSI / KS / AUC / Gini / IV / 分类指标 / 分桶排序性 的实现，
-供 credit-data-analysis / classification-model-training(含内嵌 eval_single.py)
-/ classification-model-tuning / credit-model-report 等 skill 经 `_bootstrap.py` 注入复用。
+供 credit-data-analysis / classification-model-experiments / credit-model-report
+等 skill 经 `_bootstrap.py` 注入复用。
 
 口径说明（与既有各 skill 对齐）：
 - AUC：Mann-Whitney U（秩和）法，并列用平均秩，与 sklearn.roc_auc_score 一致；
@@ -136,7 +136,7 @@ def calc_psi(actual_pcts, base_pcts, epsilon: float = 1e-10) -> float:
 def psi_from_series(base_series, actual_series, n_bins: int = 10) -> Optional[float]:
     """按等频分箱（基准分布边界）计算两组一维序列的 PSI。
 
-    与 credit-data-analysis 原 calc_psi / training DriftProbe 口径一致：
+    与 credit-data-analysis 原 calc_psi 口径一致：
     基于 base 的等频边界切分，缺失剔除，<20 有效样本返回 None。
 
     Returns:

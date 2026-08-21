@@ -54,17 +54,13 @@ def test_infer_algo(tmpdir):
     open(os.path.join(model_dir, 'model.json'), 'w').close()
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {}, None) == 'xgb'
 
-    # lr: model.pkl + meta.algo
+    # v2.3: lgb/xgb 转正产物(model.pkl + meta.algo)
     os.remove(os.path.join(model_dir, 'model.json'))
     open(os.path.join(model_dir, 'model.pkl'), 'wb').close()
-    assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lr'}, None) == 'lr'
-
-    # v2.3: lgb/xgb 转正产物(model.pkl + meta.algo)
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lgb'}, None) == 'lgb'
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'xgb'}, None) == 'xgb'
 
     # 显式 --algo 覆盖
-    assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lr'}, 'dnn') == 'dnn'
     assert score_data.infer_algo(__import__('pathlib').Path(model_dir), {'algo': 'lgb'}, 'xgb') == 'xgb'
 
 

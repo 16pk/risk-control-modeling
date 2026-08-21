@@ -96,7 +96,7 @@ M = 施加样本方案后切分出的训练段样本数，S = 安全过滤+特�
   promote/adversarial/evaluate/safety_filter）一律算法无关。
 - 未来新增 dnn/lr：在 `algo_factory.build_estimator` + `hyperparams.derive_params` + 模板
   `feature_importances` 扩展，其余不动。
-- **禁止跨 skill import**：不 import training 的 eval_single/boundary_filter，不 import tuning 任何脚本。
+- **禁止跨 skill import**：评估/安全过滤全部内聚本模块，不 import 其他 skill 任何脚本。
 - 仅复用 `_modelevo-shared`（metrics / config_io / date_utils / gen_feature_list），经 `_bootstrap.py` 注入。
 
 ## 8. 训练代码快照与可复现（plan §2.2 修改 5）

@@ -21,7 +21,7 @@ description: 建模 pipeline 内部的定版模型打分环节，位于模型定
 
 | 输入 | 必选 | 来源 | 说明 |
 |---|:---:|---|---|
-| 定版模型 | ✅ | Stage 4 收口落 `finalized_model.json` → 定位 `new-models/{run}/model/` | `model.json`(xgb 历史) / `model.pkl`(lgb/xgb experiments 转正、dnn/lr 备用) + `model_meta.json`(含 `feature_names`) |
+| 定版模型 | ✅ | Stage 4 收口落 `finalized_model.json` → 定位 `new-models/{run}/model/` | `model.json`(xgb 历史) / `model.pkl`(lgb/xgb experiments 转正) + `model_meta.json`(含 `feature_names`) |
 | 清洗后数据 | ✅ | `sample-features/data-cleaning/sample.parquet` | 含特征列 + 非特征列（id/date/label），schema 与定版模型特征对齐 |
 
 ## 3. 执行命令
@@ -34,13 +34,14 @@ python <skill_dir>/scripts/score_data.py \
     --data <session_dir>/sample-features/data-cleaning/sample.parquet \
     --out <session_dir>/scoring/score_sample.parquet \
     [--score-col score] \
-    [--algo lgb|xgb|dnn|lr]
+    [--algo lgb|xgb]
 ```
 
 编排层（development Stage 6）先从 `finalized_model.json` 读 `run_name` / `algo` / `model_path`，再拼出上面对应参数；`--algo` 一般可省（脚本从 `model_meta.json` + 文件扩展名自动判定）。
 
-> v2.3：主链路 experiments 转正的 `model.pkl`（joblib 落盘的 LGBMClassifier/XGBClassifier）可直接加载打分；
-> xgb 也兼容历史 `model.json`（Booster）。dnn/lr 保留备用路径。
+> 算法边界：仅支持 lgb/xgb（与主链路 experiments 及 classification-model-package 一致）。
+> experiments 转正的 `model.pkl`（joblib 落盘的 LGBMClassifier/XGBClassifier）可直接加载打分；
+> xgb 也兼容历史 `model.json`（Booster）。
 
 ## 4. 参数说明
 
@@ -50,7 +51,7 @@ python <skill_dir>/scripts/score_data.py \
 | `--data` | ✅ | - | 清洗后数据文件（parquet/csv） |
 | `--out` | ✅ | - | 打分输出 parquet（按扩展名自动 CSV/parquet） |
 | `--score-col` | 否 | `score` | 输出概率分列名 |
-| `--algo` | 否 | 自动判定 | 算法覆盖：`lgb`/`xgb`/`dnn`/`lr` |
+| `--algo` | 否 | 自动判定 | 算法覆盖：`lgb`/`xgb` |
 
 ## 5. 输出产物
 
@@ -83,7 +84,6 @@ python <skill_dir>/scripts/mark_finalized.py \
 | `classification-model-development` | **编排调起（Stage 6，默认执行）** | 收口确认上线候选后调起，落 `finalized_model.json` + 打分 |
 | `data-cleaning` | 上游 | 产 `sample-features/data-cleaning/sample.parquet`（本 skill 输入） |
 | `classification-model-experiments` | 上游（v2.3 主链路） | 产 `new-models/{run}/model/model.pkl`（joblib 落盘 lgb/xgb）+ `model_meta.json` |
-| `classification-model-training` | 上游（备用路径） | 备用链路产 `new-models/{run}/model/`（xgb model.json / dnn/lr pickle） |
 | `score-to-fico` | 下游（可选） | 用户主动触发时消费本 skill 打分结果（含 label + score），拟合校准转 FICO |
 | `_modelevo-shared` | 依赖 | 共享 metrics（打分评估用） |
 
@@ -95,7 +95,7 @@ python <skill_dir>/scripts/mark_finalized.py \
 | 只读上游 | 只读 `finalized_model.json` + `new-models/{run}/model/` + 清洗后数据；唯一写目录是 `scoring/` |
 | 不校准不转分 | 输出仅 `score`（违约概率），LR 校准与 FICO 转换严格交由下游 `score-to-fico` |
 | 数据安全红线 | 透传非特征列时仅重发输入已有的列（数据已由 data-cleaning 保证无身份证/手机号明文），不新增任何敏感信息 |
-| 依赖 | `pandas / numpy / pyarrow`；按算法额外 `xgboost`(xgb) / `torch`(dnn) / `scikit-learn`(lr) |
+| 依赖 | `pandas / numpy / pyarrow`；按算法额外 `xgboost`(xgb) / `lightgbm`(lgb) |
 
 ## 9. 异常处理
 
@@ -103,7 +103,7 @@ python <skill_dir>/scripts/mark_finalized.py \
 |---|---|
 | `model_meta.json` 缺失 / 无 `feature_names` | 报错退出，提示确认 model 阶段已落盘 |
 | 输入数据缺特征 | 报错并列出全部缺失特征，提示检查数据清洗/特征清单是否与定版模型一致 |
-| `model.pkl` 存在但 meta 缺 `algo` | 报错，提示用 `--algo lgb|xgb|dnn|lr` 显式指定 |
+| `model.pkl` 存在但 meta 缺 `algo` | 报错，提示用 `--algo lgb|xgb` 显式指定 |
 | 推理输出长度与输入不一致 | 报错退出，提示检查模型/数据对齐 |
 | 模型文件缺失 | 报错退出，提示确认定版 run 的 model 阶段产物 |
 

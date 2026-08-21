@@ -9,7 +9,7 @@
   - §IV 能从 experiments 源格 data/ 重建切分信息(test=val 映射)
   - §V 能兜底读 experiments 源格 feature_importance.csv
   - §VI 能显示 experiments 型 run 的 oot_auc/val_auc/n_feat 与"experiments 矩阵转正"标记
-  - §VII 缺省说明提示可手动触发 comparison
+  - §VII 为纯占位(comparison 模块已于 v2.7 移除)
 """
 import json
 import os
@@ -120,11 +120,11 @@ def test_section_vi_experiments_metrics():
     assert "baseline" in out  # training 型分类未退化
 
 
-def test_section_vii_experiments_no_comparison_hint():
+def test_section_vii_placeholder():
     sdir = _make_exp_session("s1")
     out = fill_report.build_section_vii(sdir)
-    assert "comparison" in out
-    assert "深度对比" in out
+    assert "leaderboard" in out
+    assert "占位" in out
 
 
 def test_classify_run_experiments():

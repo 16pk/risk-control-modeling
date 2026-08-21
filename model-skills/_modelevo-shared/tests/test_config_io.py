@@ -291,7 +291,7 @@ def test_legacy_routing_json_decode_stable(tmp_path):
         f.write_text(_json.dumps({"route": r}), encoding="utf-8")
         loaded = _json.loads(f.read_text(encoding="utf-8"))
         assert loaded["route"] == r
-        # downstream(run_build/feature-analysis)对 route 的判断:
+        # downstream(experiments)对 route 的判断:
         distributed_flag = str((loaded or {}).get("route") or "local").lower() == "distributed"
         assert distributed_flag == (r == "distributed")
 

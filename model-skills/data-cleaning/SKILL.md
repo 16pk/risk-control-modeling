@@ -89,7 +89,7 @@ python <skill_dir>/scripts/clean_data.py \
 |---|---|---|
 | 上游 | 用户本地 parquet/csv/feather | 数据源（本 skill 是样本进入 pipeline 的第一道清洗工序，承接 task-spec 转写的本地样本） |
 | 下游 | `credit-data-analysis` | 读 `data-cleaning/sample.parquet` + `feature-list.csv`，做分月 PSI/IV 体检（pipeline 特征分析） |
-| 下游 | `classification-model-training` | 消费 `data-cleaning/sample.parquet` + `model.split` 即时切分训练 |
+| 下游 | `classification-model-experiments` | 消费 `data-cleaning/sample.parquet` + `model.split` 即时切分训练 |
 | 依赖 | `_modelevo-shared` | 复用 `gen_feature_list`（特征清单解析唯一真相）、`config_io`（配置/安全红线） |
 
 ## 6. 执行约束
@@ -98,7 +98,7 @@ python <skill_dir>/scripts/clean_data.py \
 |---|---|
 | 哨兵值仅作用于特征列 | id / dt / label 列不参与替换，避免误伤标签与主键 |
 | 去重保留规则 | 按 `(id_col, dt_col)` 去重，组内优先保留 label 非空行；全空或未提供 label_col 则保留首行兜底 |
-| label 非法值剔除**暂不处理** | 该职责保留在 `classification-model-training` 即时切分后的 OOT 防御逻辑中，本 skill 不动 |
+| label 非法值剔除**暂不处理** | 该职责保留在下游训练模块（experiments）消费切分后的 OOT 防御逻辑中，本 skill 不动 |
 | 强门禁 | 发现哨兵值命中 → 任务暂停 → 弹提示 → 用户确认是否继续 |
 
 > 覆盖范围、异常处理、交互约定详情见 `references/constraints-and-exceptions.md`。

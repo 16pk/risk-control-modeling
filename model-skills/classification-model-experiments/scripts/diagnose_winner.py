@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""winner 规则诊断（移植自 classification-model-tuning/scripts/diagnose.py，仅保留 lgb/xgb）。
+"""winner 规则诊断（移植自原 classification-model-tuning/scripts/diagnose.py，仅保留 lgb/xgb；原 tuning 模块已于 v2.7 移除）。
 
 主链路（pipelines）：矩阵实验 → leaderboard 评选出每算法 winner → 本模块规则诊断 →
 根据诊断调整 Optuna 搜索锚点（recommend_winner.adjust_optuna_anchors）→ 邻域调优。

@@ -1,6 +1,6 @@
 ---
 name: credit-data-analysis
-description: 信贷特征分析 skill，双模式：①独立数据体检（用户主动发起"样本分析/特征分析/特征IV/特征PSI/数据体检/分月监控/逾期率走势"时优先使用，分月视角 11-sheet Excel，可经 development 轻量入口 prep_sample.py analyze 在清洗后自动调用）；②建模 pipeline 特征分析（development Stage 0 编排调起，从 feature_config.yaml 推导 PSI 基准月=第一个 OOT 月，产出 md+xlsx 报告）。不做三档切分、不产 IV/PSI 筛选 csv（切分后置到 training/tuning/evaluation 消费时即时进行，训练过程不通过 IV/PSI 指标筛选特征）。
+description: 信贷特征分析 skill，双模式：①独立数据体检（用户主动发起"样本分析/特征分析/特征IV/特征PSI/数据体检/分月监控/逾期率走势"时优先使用，分月视角 11-sheet Excel，可经 development 轻量入口 prep_sample.py analyze 在清洗后自动调用）；②建模 pipeline 特征分析（development Stage 0 编排调起，从 feature_config.yaml 推导 PSI 基准月=第一个 OOT 月，产出 md+xlsx 报告）。不做三档切分、不产 IV/PSI 筛选 csv（切分后置到 experiments 消费时即时进行，训练过程不通过 IV/PSI 指标筛选特征）。
 ---
 
 # credit-data-analysis
@@ -15,7 +15,7 @@ description: 信贷特征分析 skill，双模式：①独立数据体检（用�
 | pipeline（development Stage 0） | 建模流程内部特征分析，由 `classification-model-development` 编排调起 | 分月矩阵（PSI=基准月对比各月，IV=分月） | **默认取第一个 OOT 月**（读 `--split-config` 的 `model.split.oot_range` 首月，**须用户确认**，`--base-month` 可覆盖） | Excel + md + `_manifest.json` |
 
 > **职责边界**：
-> - **不做三档切分**：train/test/oot 切分后置到 training/tuning/evaluation 消费时即时进行（复用 training 的 `prepare_splits`），本 skill **不产 `splits/{train,test,oot}.parquet`**。
+> - **不做三档切分**：train/test/oot 切分后置到 experiments 消费时即时进行，本 skill **不产 `splits/{train,test,oot}.parquet`**。
 > - **不产 IV/PSI 筛选 csv**：训练过程不通过 IV/PSI 指标筛选特征，本 skill 只做体检报告。
 > - **独立任务前置链路（v2.5.2）**：用户对原始数据文件直接发起分析时，须先经 `feature-classification`（识别特征列 + 固化权威清单）与 `data-cleaning`（清洗），再分析清洗后 `sample.parquet`——轻量入口 `prep_sample.py analyze` 已串联（特征识别 → 清洗 → 分析），禁止绕过前置直接分析原始数据（否则日期/订单号/标签列混入特征，哨兵值干扰 PSI/IV）。
 > - 本 skill 承担建模 pipeline 特征分析角色（Stage 0）。
@@ -121,8 +121,7 @@ python <skill_dir>/scripts/feature_analysis.py \
 |---|---|---|
 | 上游 | `classification-model-development` | pipeline 模式由其在 Stage 0 编排调起，传入 `--split-config`（feature_config.yaml）与 `--base-month` 确认结论 |
 | 上游 | `data-cleaning` | 建模 session 内直接分析其产出的 `sample.parquet` |
-| 下游 | `classification-model-training` | 消费 `sample.parquet` + `feature_config.yaml` 的 `model.split` 即时切分训练（本 skill 不切分） |
-| 平行 | `classification-model-tuning` | 训练过程不通过 IV/PSI 筛选特征；本 skill 报告仅作人工参考 |
+| 下游 | `classification-model-experiments` | 消费 `sample.parquet` + `feature_config.yaml` 的 `model.split` 即时切分训练（本 skill 不切分） |
 | 依赖 | `_modelevo-shared` | 可选复用 `config_io.load_config`（yaml 解析，脚本内已有独立 yaml 读取） |
 
 ## 6. 执行约束
@@ -134,7 +133,7 @@ python <skill_dir>/scripts/feature_analysis.py \
 | ⚠️ 数据安全红线 | 分析报告不得透出身份证 / 手机号等明文个人数据；如数据含敏感列，先排除再分析 |
 | ⚠️ 小样本标记 | 某月有效记录 <20 条时，该月 PSI/IV 单元格标 NaN，不硬算 |
 | ⚠️ 无效值提醒（不自动清洗） | 检测到 `-1/-2/-999/-9999` 等哨兵值时在报告提醒，**仅标记不替换**；是否清洗、如何清洗（替换为空值 / 剔除）由人在建模阶段决策，本 skill 只产报告不动数据 |
-| ⚠️ 不切分不筛选 | 本 skill 不产三档 splits、不产 IV/PSI 筛选 csv；切分后置到消费方，特征筛选不做（由 data-cleaning 的 feature-list + training 的边界安全过滤承担） |
+| ⚠️ 不切分不筛选 | 本 skill 不产三档 splits、不产 IV/PSI 筛选 csv；切分后置到消费方，特征筛选不做（由 data-cleaning 的 feature-list + experiments 的安全过滤承担） |
 
 ## 7. 异常处理
 

@@ -43,6 +43,6 @@ python scripts/fetch_sample_task_spec.py \
 
 ## 3. 切分说明
 
-三档切分与切分统计**不在本 skill 完成**：`model.split` 仅记录/透传，切分由 `classification-model-training`（`prepare_splits`）等消费方在训练/调优/评估时按区间即时切分，**不落盘 splits**。
+三档切分与切分统计**不在本 skill 完成**：`model.split` 仅记录/透传，切分由 `classification-model-experiments` 等消费方在训练/评估时按区间即时切分，**不落盘 splits**。
 
 > 关联: `classification-model-task-spec/SKILL.md`

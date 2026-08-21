@@ -1,6 +1,6 @@
 # 风控建模专家 (Risk Control Modeling)
 
-基于 ModelEvo 框架的信贷风控建模专家：分类建模（XGBoost / LightGBM / LR 评分卡 / DNN）、特征工程（IV / PSI / WOE）与模型评估对比，端到端交付可直接上线的风险模型。
+基于 ModelEvo 框架的信贷风控建模专家：分类建模（XGBoost / LightGBM）、特征工程（IV / PSI / WOE）与模型评估，端到端交付可直接上线的风险模型。
 
 ## 类型
 
@@ -9,8 +9,8 @@ Agent 型（单个 AI 专家）
 ## 功能
 
 - **建模入口判定**：通过 Q1/Q2/Q3 判定需求是否属于 classification（预测"谁会发生结果"）。
-- **分类建模**：实验矩阵（样本×特征正交 + 对抗验证 + 规则诊断 + Optuna 调优 + 转正，v2.3 主链路默认）→ 可选备用路径单模型训练 / 调参 → 多模型 N-way 对比（可选用）→ 定版打分 → 归档。
-- **特征工程与评分卡**：IV / PSI / WOE 筛选，LR 评分卡（`Score = base_score − factor·ln(odds)`）。
+- **分类建模**：实验矩阵（样本×特征正交 + 对抗验证 + 规则诊断 + Optuna 调优 + 转正，v2.3 主链路默认）→ 定版打分 → 归档。
+- **特征工程**：IV / PSI / WOE 分析（credit-data-analysis 分月体检报告）。
 - **风控纪律**：时间切分（Train<Test<OOT）、PSI 0.10 / IV 0.02·1.0 / 缺失率 0.95 红线、数据安全红线（身份证 / 手机号硬编码拦截）。
 
 ## 已挂载的建模技能（随包分发，开箱可用）
@@ -19,13 +19,13 @@ Agent 型（单个 AI 专家）
 
 - 知识库：`model-knowledge`
 - 共享能力：`feature-classification` / `data-cleaning` / `credit-data-analysis` / `model-scoring`
-- 分类建模：`classification-model-task-spec` / `classification-model-development` / `classification-model-experiments`（主链路默认训练）/ `classification-model-training`（备用）/ `classification-model-tuning`（备用）/ `classification-model-comparison` / `credit-model-report` / `score-to-fico`
+- 分类建模：`classification-model-task-spec` / `classification-model-development` / `classification-model-experiments`（主链路默认训练）/ `classification-model-package` / `credit-model-report` / `score-to-fico`
 
 ## 使用示例
 
-- 基于本地样本文件做一个信贷逾期风险分类模型，并产出评分卡
+- 基于本地样本文件做一个信贷逾期风险分类模型（lgb/xgb 实验矩阵）
 - 帮我做特征分析，按 IV / PSI / 缺失率 查看不达标变量（credit-data-analysis）
-- 对比多个候选模型的 AUC / KS 分桶排序性，给出推荐与上线建议
+- 跑实验矩阵（含对抗验证、规则诊断 + Optuna 调优）并转正胜出模型
 
 ## 目录结构
 
@@ -35,7 +35,7 @@ risk-control-modeling/
 ├── agents/risk-control-modeling.md # 专家知识体（角色/能力/SOP/红线）
 ├── avatars/expert.png              # 头像
 ├── CHANGELOG.md                    # 版本迭代信息（仅供包维护者）
-├── model-skills/                   # 挂载的 ModelEvo 技能集（12 个 skill）
+├── model-skills/                   # 挂载的 ModelEvo 技能集（11 个 skill）
 │   ├── _modelevo-shared/           # 公共代码（数据安全红线/配置读写/metrics）
 │   └── classification-model-development/ ...  # 各 skill（均含 SKILL.md）
 └── README.md

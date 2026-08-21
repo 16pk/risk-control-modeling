@@ -34,7 +34,7 @@
 | OOT | | |
 
 > 切分方式：三档区间不强制时间递增（时序排布由业务侧保证）；train/test 开发集可随机切分（记录 seed，val 偏乐观以 OOT 为裁决）。
-> 切分在 training/tuning/evaluation 消费时即时进行，不落盘 splits。
+> 切分在 experiments 消费时即时进行，不落盘 splits。
 
 ## 四、待处理项
 

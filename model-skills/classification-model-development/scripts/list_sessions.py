@@ -3,7 +3,7 @@
 
 两种情形:
 - 当前会话已有 session_dir (上游 data-cleaning / feature-analysis 已跑过) → 直接复用, 不询问。
-- 用户新启动一个会话直接调 model-training → 调本脚本列出历史 sessions,
+- 用户新启动一个会话直接调建模主链路 → 调本脚本列出历史 sessions,
   agent 用 AskUserQuestion 问: 选历史(列编号) 或 新建(追问 task_name/description)。
 
 session 目录格式: runs/{YYYYMMDD-HHMMSS}-{task_name}/session.json

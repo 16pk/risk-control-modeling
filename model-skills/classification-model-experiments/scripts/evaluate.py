@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """精简四档评估（复用 _modelevo-shared/metrics.py：AUC/KS/IV/PSI/分桶）。
 
-不 import training 的 eval_single.py —— 本模块自实现精简版，输出结构：
+本模块自实现精简版评估（不依赖外部评估脚本），输出结构：
   evaluation/eval.json + evaluation/eval.md
   {
     "splits": {

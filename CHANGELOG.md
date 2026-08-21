@@ -2,6 +2,35 @@
 
 本文件只记录专家包与建模框架的**版本迭代信息**（结构变更、职责迁移、产物调整），供包维护者参考。用户调用 skill 时无需阅读；各 skill 的 SKILL.md 只描述当前状态，不携带版本标记。
 
+## v2.7.0（2026-08-21）
+
+**完全移除** `classification-model-training` / `classification-model-tuning` / `classification-model-comparison` 三个备用模块（v2.3 起已不在默认编排，本版删除目录与注册）。专家包算法收敛为 **lgb/xgb**。
+
+### 移除与能力下线
+
+- 删除 `model-skills/classification-model-{training,tuning,comparison}/` 三个目录；`plugin.json` skills 数组 14 → 11 项，version 2.6.1 → 2.7.0。
+- 永久下线能力：DNN/LR 评分卡训练、基于单模型 run 的调参/特征筛选（`run_tuning` / `select_features`）、N-way 深度对比（`compare_models` / `aggregate_session_comparison`）。规则诊断与 Optuna 调优由 experiments 承接（`diagnose_winner` / `recommend_winner` / `tune_winner`，逻辑早已移植）。
+
+### model-scoring 收敛（仅 lgb/xgb）
+
+- `score_data.py`：删除 `_locate_training_scripts()` 与 dnn/lr pickle 加载分支（原依赖 training 的 `trainers.train_dnn` / `trainers.train_lr` 反序列化）；`infer_algo` / `--algo` 收敛 `lgb|xgb`；`test_score_data.py` 同步删 lr/dnn 用例。
+- SKILL.md 算法边界改"仅 lgb/xgb（含 xgb 历史 model.json）"，删备用路径上游行。
+
+### development 收敛
+
+- `SKILL.md`：frontmatter 触发词删"调参、多模型对比"；Stage 5 删 5b（comparison）/5c（备用路径）仅留继续实验；路径接力表删 5b/5c 行；切分说明删备用路径两行；决策点话术删深度对比选项与备用路径括注；§8 删 dnn/lr 出口；§11 关联 skill 删备用路径与 comparison。
+- `fill_report.py`：删 `_latest_run_splits_dir`（training 即时切分定位）与 `_classify_run` 的 `model-tuning` 分支；§VII 横向对比段改纯占位（leaderboard 为准）；旧 session 的 training/tuning run 不再支持回填 report。
+
+### 文档同步
+
+- `agents/risk-control-modeling.md`：职责映射删 3 行，frontmatter/正文 LR/DNN/评分卡表述收敛为 lgb/xgb，删"可解释性优先 LR 评分卡"建议。
+- `README.md` / `CODEBUDDY.md` / `model-skills/README.md`：目录树、清单表、流程图、session 结构、技术栈（删 optbinning/shap）同步。
+- 周边 skill 文档去引用：task-spec / data-cleaning / credit-data-analysis / credit-model-report / score-to-fico / model-knowledge / experiments（切分消费方与评估口径改对 experiments，移植溯源标注"原模块已移除"）；`_modelevo-shared` 注释/示例同步；`classification-model-package` 算法边界文案更新（校验保留，防御旧 session）。
+
+### 测试
+
+- model-scoring 6 过 2 跳 / development 16 过 / experiments 87 过 / _modelevo-shared 73 过 / task-spec 9 / data-cleaning 26 / credit-data-analysis 7 / score-to-fico 3 / package 13 / feature-classification 35，全部通过。
+
 ## v2.6.1（2026-08-21）
 
 `classification-model-experiments` 实验格**数据快照瘦身**（方案 A）：切分数据不再按格冗余落盘，保留 Optuna 调优轻量依赖。

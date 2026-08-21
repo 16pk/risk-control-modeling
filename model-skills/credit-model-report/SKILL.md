@@ -1,6 +1,6 @@
 ---
 name: credit-model-report
-description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。**移出建模主流程**：仅用户主动要求业务评估报告时触发（"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板"）。标准化指标三件套（AUC/KS/分桶排序性）由 classification-model-training 内嵌的 eval_single.py 产出。
+description: 从模型打分 CSV 生成风控模型**业务评估报告**（Excel，6-sheet：回溯表 / 建模信息 / KS / 特征重要性 / 模型效果 Lift+SWAP / 打分分布 PSI+分桶+分段逾期率），支持新模型 vs 基线模型对比、客群过滤、模板化输出。**移出建模主流程**：仅用户主动要求业务评估报告时触发（"评估报告""业务评估报告""回溯表""Lift""SWAP""打分分布""分段逾期率""模型报告模板"）。标准化指标（AUC/KS/分桶排序性）由 classification-model-experiments 的评估产物（evaluation/eval.json/.md）承载。
 compatibility: python3, pandas, openpyxl, numpy
 ---
 
@@ -10,13 +10,13 @@ compatibility: python3, pandas, openpyxl, numpy
 
 ## 定位与分工
 
-| | credit-model-report（本 skill） | classification-model-training 内嵌评估 |
+| | credit-model-report（本 skill） | classification-model-experiments 评估 |
 |---|---|---|
-| 触发场景 | **用户主动要求**业务评估报告（回溯表 / Lift / SWAP / 打分分布 / 模板输出），不进入 development 主流程 | 建模 pipeline 内单模型标准化评估（AUC / KS / 分桶排序性，eval_single.py 自动产出） |
-| 输出 | `{model_name}评估报告_YYYYMMDD.xlsx`（模板化，6-sheet） | JSON + MD + XLSX 三件套（标准化评估） |
+| 触发场景 | **用户主动要求**业务评估报告（回溯表 / Lift / SWAP / 打分分布 / 模板输出），不进入 development 主流程 | 建模 pipeline 内标准化评估（AUC / KS / 分桶排序性，evaluation/eval.json/.md 自动产出） |
+| 输出 | `{model_name}评估报告_YYYYMMDD.xlsx`（模板化，6-sheet） | JSON + MD 评估产物（标准化评估） |
 | 特色能力 | **新旧模型 SWAP 迁移分析**、分段逾期率、回溯表、模板复用 | 标准评估指标 + 客群拆分 |
 
-> **触发关键词**：评估报告 / 业务评估报告 / 回溯表 / Lift / SWAP / 打分分布 / 分段逾期率 / 模型报告模板 → 本 skill（仅用户主动要求时）。仅要 AUC / KS 等标准化指标 → 训练产物 `evaluation/*_eval.xlsx` 已含。
+> **触发关键词**：评估报告 / 业务评估报告 / 回溯表 / Lift / SWAP / 打分分布 / 分段逾期率 / 模型报告模板 → 本 skill（仅用户主动要求时）。仅要 AUC / KS 等标准化指标 → experiments 评估产物 `evaluation/eval.json/.md` 已含。
 
 ## 执行流程
 
@@ -179,8 +179,7 @@ cd "$WORK_DIR" && python3 generate_report.py config.json --dir "$WORK_DIR"
 
 | 上下游 | Skill | 关系 |
 |---|---|---|
-| 平行 | `classification-model-training`（内嵌评估） | 分工不重叠：training 内嵌 eval_single 出标准化指标三件套（pipeline 内），本 skill 出业务模板报告（回溯表/Lift/SWAP/打分分布） |
-| 平行 | `classification-model-comparison` | comparison 做多模型指标横向对比，本 skill 做新旧模型 SWAP 迁移 + 业务报告 |
+| 平行 | `classification-model-experiments`（评估） | 分工不重叠：experiments 评估出标准化指标（pipeline 内），本 skill 出业务模板报告（回溯表/Lift/SWAP/打分分布） |
 | 独立 | 无强制依赖 | 纯 pandas / numpy / openpyxl，不依赖 `_modelevo-shared` / Spark |
 
 ## 执行约束

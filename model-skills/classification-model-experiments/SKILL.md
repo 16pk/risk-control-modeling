@@ -1,11 +1,11 @@
 ---
 name: classification-model-experiments
-description: 建模主链路默认训练模块（v2.3）兼独立实验台。用 LightGBM 跑 baseline（lgb-full-all-v1 兼任全局基准），随后串行执行 lgb / xgb 下「样本方案 × 特征方案」正交实验矩阵（全量 / 最近N月 / 线性时间加权 / 对抗剔除 × 全量 / 特征重要性 / IV-PSI / 对抗剔除），含对抗验证独立格、leaderboard 评选（OOT AUC 排序 + 乐观偏差标注）、每算法 winner 规则诊断（overfit/underfit/underconverged/unstable_psi/well_fit，移植自 tuning，Optuna 前执行并驱动搜索锚点调整、well_fit 可跳过）+ Optuna 邻域调优（-opt run），最终展示 top10 由用户确认后转正（new-models/ + finalized_model.json）。当用户说"跑实验矩阵""实验台""多方案对比实验""baseline 实验""正交实验""对抗验证""实验调优"或主链路默认训练时使用。
+description: 建模主链路默认训练模块（v2.3）兼独立实验台。用 LightGBM 跑 baseline（lgb-full-all-v1 兼任全局基准），随后串行执行 lgb / xgb 下「样本方案 × 特征方案」正交实验矩阵（全量 / 最近N月 / 线性时间加权 / 对抗剔除 × 全量 / 特征重要性 / IV-PSI / 对抗剔除），含对抗验证独立格、leaderboard 评选（OOT AUC 排序 + 乐观偏差标注）、每算法 winner 规则诊断（overfit/underfit/underconverged/unstable_psi/well_fit，Optuna 前执行并驱动搜索锚点调整、well_fit 可跳过）+ Optuna 邻域调优（-opt run），最终展示 top10 由用户确认后转正（new-models/ + finalized_model.json）。当用户说"跑实验矩阵""实验台""多方案对比实验""baseline 实验""正交实验""对抗验证""实验调优"或主链路默认训练时使用。
 ---
 
 # classification-model-experiments
 
-建模实验台（v2.3 起为主链路默认训练模块）：矩阵规划 → 样本/特征方案正交实验 → 对抗验证 → leaderboard 评选 → **winner 规则诊断**（移植自 tuning，Optuna 前执行）→ Optuna 调优（诊断驱动锚点）→ 转正闭环。由 `classification-model-development` Stage 3 默认调度；也可任意 session 独立调用。`classification-model-training` / `classification-model-tuning` 保留为备用路径。
+建模实验台（v2.3 起为主链路默认训练模块）：矩阵规划 → 样本/特征方案正交实验 → 对抗验证 → leaderboard 评选 → **winner 规则诊断**（Optuna 前执行）→ Optuna 调优（诊断驱动锚点）→ 转正闭环。由 `classification-model-development` Stage 3 默认调度；也可任意 session 独立调用。
 
 > ⚠️ **红线例外（仅本模块，用户已授权，见 §9）**：对抗格 OOT 可用于对抗分类器训练与样本/特征筛选统计；IV-PSI 格 OOT 参与 PSI 统计。两者均**禁止** OOT 作早停集、进训练集、参与结构超参选择；对应实验的 OOT 指标存在乐观偏差，leaderboard 显著标注。
 
@@ -115,12 +115,11 @@ python .../run_experiments.py ... --until promote --promote-id lgb-full-all-v1
 | 上游 | `classification-model-task-spec` / 任意含 `model.split` 的 yaml | 提供三档切分区间（切分唯一真相 = `model.split`） |
 | 编排 | `classification-model-development` | **v2.3 主链路 Stage 3 默认调度本模块**（`run_experiments.py --until promote`）；本模块内部对抗幅度/top10 转正仍逐点确认 |
 | 下游 | `model-scoring` | 转正后 `finalized_model.json` 无感消费（`mark_finalized.py` / `score_data.py` 支持 joblib 加载 `model.pkl` 的 lgb/xgb） |
-| 可选 | `classification-model-comparison` | 深度对比（分桶/lift/召回/条件格式）仅用户主动触发；experiments 转正 run 默认不产 eval_single JSON |
 | 依赖 | `_modelevo-shared` | 仅复用共享层：`metrics.py`（AUC/KS/Gini/PSI/IV/分桶）、`config_io.check_sensitive`、`date_utils`；**禁止 import 其他 skill 脚本** |
 
-> 规则诊断（`diagnose_winner` / `recommend_winner`）逻辑移植自 `classification-model-tuning` 的
+> 规则诊断（`diagnose_winner` / `recommend_winner`）逻辑移植自原 `classification-model-tuning` 的
 > `diagnose.py` / `recommend_params.py`（仅保留 lgb/xgb 策略，lgb 为新增等价策略表）；
-> tuning 原模块保留为备用路径，两者独立。
+> 原 tuning 模块已于 v2.7 移除，本模块为规则诊断的唯一承载。
 
 ## 6. 执行约束
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """model-evo/_modelevo-shared 公共配置读写: yaml 加载 + 通用必填校验 + 数据安全红线。
 
-各 skill(feature-analysis / classification-model-training / classification-model-tuning)在本模块之上叠加自己的专有校验。
+各 skill（experiments / data-cleaning / credit-data-analysis 等）在本模块之上叠加自己的专有校验。
 """
 from __future__ import annotations
 
@@ -92,8 +92,7 @@ def validate_common(cfg: dict) -> None:
     """通用配置校验: 必填字段 + features 加载 + 敏感信息红线。
 
     全仓库已废除 spark 取数, 仅支持 local_file 语义: 数据来自本地 parquet,
-    不再要求 sample_table / fetch_dt 必填。各 skill 在此基础上追加专有校验
-    (如 model-training 校验 base_score_col)。
+    不再要求 sample_table / fetch_dt 必填。各 skill 在此基础上追加专有校验。
 
     Args:
         cfg: load_config 返回的字典
@@ -166,7 +165,7 @@ def _parse_range_pair(name: str, value) -> tuple:
 def validate_split_ranges(model: dict) -> None:
     """校验 model.split(可选): train/test/oot 三档 pday 区间的合法性。
 
-    切分唯一真相 = model.split(feature_config.yaml / train_config.yaml), v2.1 起由 training
+    切分唯一真相 = model.split(feature_config.yaml), v2.3 起由 experiments
     在训练消费时按区间即时切分; task-spec 的 sample_config.*.yaml 的 split 段仅「记录/透传」,
     调用本函数只校验记录区间的合法性, 不再驱动切分。
 
@@ -218,7 +217,7 @@ def validate_split_ranges(model: dict) -> None:
 #
 # 口径(2026-08 固化为字节): 预估『拉到本地后的体量』——<1GB → local; ≥1GB → distributed。
 #
-# v2.1 精简说明: task-spec Gate P0 裁决 / feature-analysis 已删除, run_build 计算路由恒为 local,
+# v2.1 精简说明: task-spec Gate P0 裁决 / feature-analysis 已删除, 下游训练(experiments)计算路由恒为 local,
 # 不再消费 engine.ruling; 本模块的 estimate_size_bytes / route_by_bytes 保留为纯工具函数
 # (task-spec fetch_sample 仍可用于样本体量预估), 但不再作为分布式路由的唯一真源。
 # ---------------------------------------------------------------------------
@@ -288,7 +287,7 @@ def route_by_bytes(size_or_none, *, where="", limit=LOCAL_BYTES_LIMIT,
 
     Args:
         size_or_none: estimate_size_bytes 的返回值(可为 None=无法估计)
-        where: 调用位置标签(如 "run_build Stage1"/"task-spec Gate P0"), 仅用于告警文案定位
+        where: 调用位置标签(如 "experiments Stage4"/"task-spec Gate P0"), 仅用于告警文案定位
         limit: 字节阈值, 默认 LOCAL_BYTES_LIMIT(=1GB)
         schema_version: 存档版本号, 供 manifest 溯源本次裁决依据
 

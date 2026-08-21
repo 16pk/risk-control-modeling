@@ -92,24 +92,6 @@ def _latest_run_config(session_dir: Path) -> Optional[dict]:
     return None
 
 
-def _latest_run_splits_dir(session_dir: Path) -> Optional[Path]:
-    """v2.1: 找最新 run 内部的即时切分产物目录 new-models/*/data/splits/。
-
-    返回按目录名倒序(时间戳/版本)第一个含 train.parquet 的 data/splits; 无则 None。
-    """
-    new_models = session_dir / "new-models"
-    if not new_models.is_dir():
-        return None
-    candidates = []
-    for run_dir in sorted(new_models.iterdir(), reverse=True):
-        if not run_dir.is_dir():
-            continue
-        splits_dir = run_dir / "data" / "splits"
-        if (splits_dir / "train.parquet").exists():
-            candidates.append(splits_dir)
-    return candidates[0] if candidates else None
-
-
 def _is_experiments_run(cfg: dict) -> bool:
     """v2.3: 识别 experiments 矩阵转正 run(config.json.produced_by == skills/model-experiments)。"""
     return cfg.get("produced_by") == "skills/model-experiments"
@@ -255,9 +237,8 @@ def _build_split_manifest_from_parquets(splits_dir: Path) -> Optional[dict]:
 def build_section_iv(session_dir: Path) -> str:
     """特征宽表段 — 来源: feature-list.csv + 三档切分。
 
-    v2.1 切分后置到 training 消费时即时切分(写 new-models/*/data/splits/)。
-    v2.3 experiments 主链路转正 run 无 run 内部 data/splits/ → 改从 experiments/{source_exp}/
-    矩阵源格的 data/{train,val,oot}.parquet 重建(test 档用实验台 val 表示, 注明语义)。
+    v2.3 主链路: experiments 转正 run 从 experiments/{source_exp}/ 矩阵源格的
+    data/{train,val,oot}.parquet 重建切分信息(test 档用实验台 val 表示, 注明语义)。
     """
     dc_dir = session_dir / "sample-features" / "data-cleaning"
     manifest = None
@@ -271,13 +252,6 @@ def build_section_iv(session_dir: Path) -> str:
             manifest = exp_manifest
             source_tag = "experiments 矩阵源格 data/(test=实验台 val)"
 
-    # v2.1 新链路: 最新 run 内部的即时切分产物 data/splits/{train,test,oot}.parquet
-    if not manifest:
-        new_splits_dir = _latest_run_splits_dir(session_dir)
-        if new_splits_dir is not None:
-            manifest = _build_split_manifest_from_parquets(new_splits_dir)
-            source_tag = "training 即时切分(run 内部 data/splits)"
-
     # 旧 session 兼容: sample-features/splits/
     if not manifest:
         splits_dir = session_dir / "sample-features" / "splits"
@@ -288,7 +262,7 @@ def build_section_iv(session_dir: Path) -> str:
     if not manifest:
         return (
             f"{SECTION_ANCHORS['IV'][0]}\n\n"
-            "（特征宽表/切分尚未执行: 无 run 内部 data/splits/ 或 experiments 矩阵源格 data/）\n"
+            "（特征宽表/切分尚未执行: 无 experiments 矩阵源格 data/）\n"
         )
 
     splits = manifest.get("splits", {})
@@ -412,8 +386,8 @@ def _feature_importance_lines(fi_path: Optional[Path]) -> list:
 def _latest_run_feature_importance(session_dir: Path) -> Optional[Path]:
     """v2.3 兜底: 找最新 run 的特征重要性 csv。
 
-    - training 型 run: new-models/*/explainability/feature-importance.csv
     - experiments 型 run: 从其 config.json.source_exp 定位 experiments/{id}/feature_importance.csv
+    - 其他 run: new-models/*/explainability/feature-importance.csv(历史兼容)
     """
     new_models = session_dir / "new-models"
     if not new_models.is_dir():
@@ -450,10 +424,6 @@ def _build_section_v_fallback(fi_path: Path) -> str:
 
 def _classify_run(config: dict) -> str:
     """从 config.json 判断 run 类型,返回一句话描述。"""
-    produced_by = config.get("produced_by", "")
-    runtime = config.get("runtime", {})
-    algo = config.get("algo", "?")
-
     if _is_experiments_run(config):
         # v2.3: experiments 矩阵转正 run
         feat_scheme = config.get("feat_scheme") or ""
@@ -466,18 +436,6 @@ def _classify_run(config: dict) -> str:
         if sample_scheme or feat_scheme:
             tag += f" ({sample_scheme} × {feat_scheme})"
         return tag
-
-    if "model-tuning" in produced_by:
-        if "selection" in runtime:
-            sel = runtime.get("selection", {})
-            kept = len(sel.get("kept_features", []))
-            dropped = len(sel.get("dropped", []))
-            return f"feat 筛选 (kept={kept}, dropped={dropped})"
-        if "diagnosis" in runtime:
-            diag = runtime.get("diagnosis", {})
-            method = runtime.get("method", "rule")
-            return f"tuned ({diag.get('status', '?')}, method={method})"
-        return "tuning"
 
     return "baseline"
 
@@ -546,57 +504,11 @@ def build_section_vi(session_dir: Path) -> str:
 # ===== Section VII: 横向对比 =====
 
 def build_section_vii(session_dir: Path) -> str:
-    """横向对比段 — 来源: model-comparison/model-comparison_*.json。"""
-    mc_dir = session_dir / "model-comparison"
-    oot_json = _read_json(mc_dir / "model-comparison_oot.json")
-
-    if not oot_json:
-        return (
-            f"{SECTION_ANCHORS['VII'][0]}\n\n"
-            "（session-level 横向对比尚未生成。experiments 主链路评选用 leaderboard(OOT AUC 排序);"
-            "如需深度对比(分桶/lift/召回/条件格式), 可手动触发 comparison 模块）\n"
-        )
-
-    auc_cmp = oot_json.get("auc_comparison", {}).get("全量", {})
-    ks_cmp = oot_json.get("ks_comparison", {}).get("全量", {})
-
-    entries: List[Tuple[str, float, float]] = []
-    for model_key, auc_val in auc_cmp.items():
-        try:
-            auc_f = float(auc_val)
-        except (TypeError, ValueError):
-            continue
-        ks_f = float(ks_cmp.get(model_key, 0)) if ks_cmp.get(model_key) else 0.0
-        entries.append((model_key, auc_f, ks_f))
-
-    entries.sort(key=lambda x: x[1], reverse=True)
-
-    lines = [
-        f"{SECTION_ANCHORS['VII'][0]}\n",
-        f"对比 {len(entries)} 个模型 (按 oot AUC 降序):",
-        "",
-        "| 排名 | model | oot AUC | oot KS |",
-        "|------|-------|---------|--------|",
-    ]
-    for rank, (model_key, auc, ks) in enumerate(entries, 1):
-        clean_name = model_key.replace(" oot", "").strip()
-        lines.append(f"| {rank} | {clean_name} | {auc:.4f} | {ks:.4f} |")
-
-    if entries:
-        top1 = entries[0]
-        lines.append("")
-        lines.append(
-            f"> Top1: `{top1[0].replace(' oot', '').strip()}` "
-            f"AUC={top1[1]:.4f} KS={top1[2]:.4f}"
-        )
-
-    lines.extend([
-        "",
-        f"> 详细对比见 `model-comparison/model-comparison_oot.md` "
-        f"(另有 train/test 两档)",
-        "",
-    ])
-    return "\n".join(lines)
+    """横向对比段 — 纯占位（v2.7 起 comparison 模块已移除，主链路评选用 experiments leaderboard）。"""
+    return (
+        f"{SECTION_ANCHORS['VII'][0]}\n\n"
+        "（experiments 主链路评选以 leaderboard 为准：OOT AUC 排序 + 乐观偏差标注；本段为占位）\n"
+    )
 
 
 # ===== 报告替换逻辑 =====

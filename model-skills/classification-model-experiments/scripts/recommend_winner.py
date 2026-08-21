@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""winner 规则推荐 + Optuna 锚点调整（移植自 classification-model-tuning/scripts/recommend_params.py，
+"""winner 规则推荐 + Optuna 锚点调整（移植自原 classification-model-tuning/scripts/recommend_params.py，
 仅保留 lgb/xgb；新增 lgb 策略表与 adjust_optuna_anchors）。
 
 两部分职责：
@@ -266,5 +266,5 @@ def adjust_optuna_anchors(
 
         validate_anchors(anchors, "adjust_optuna_anchors")
     except ImportError:
-        pass  # 独立 import 场景（如 tuning 备用路径）无 hyperparams 时跳过校验
+        pass  # 独立 import 场景（无 hyperparams 时）跳过校验
     return anchors

@@ -31,7 +31,7 @@ description: 建模需求澄清专家。用最少的问题（3 问：预测目�
 |---|----|------|------|
 | 1 | **预测目标 Y 怎么定义？** | 预测什么行为、多长观察窗口（如"7天内是否逾期"）；好坏标签定义（逾期≥N天为坏） | 目标定错后面全白做，必问 |
 | 2 | **数据文件路径 + 关键列名？** | 本地 parquet/csv/feather 路径；`--id-cols`/`--label-col`/`--dt-col`（默认 `fuid`/`label`/`f_p_date`，可覆盖） | 样本含 `id + 特征列 + label`（可含日期列） |
-| 3 | **Train/Test/OOT 切分窗口？** | 三档起止日期（YYYY-MM-DD 或 8 位 YYYYMMDD），或样本起止 + 比例（三档区间不强制时间递增，时序排布由业务侧保证） | 仅记录/透传到 `feature_config.yaml` 的 `model.split`，切分由消费方（training/tuning/evaluation）即时进行 |
+| 3 | **Train/Test/OOT 切分窗口？** | 三档起止日期（YYYY-MM-DD 或 8 位 YYYYMMDD），或样本起止 + 比例（三档区间不强制时间递增，时序排布由业务侧保证） | 仅记录/透传到 `feature_config.yaml` 的 `model.split`，切分由消费方（experiments）即时进行 |
 
 > 人群（WHO）、效果目标（HOW GOOD）、约束（CONSTRAINTS）**不单独询问**：有合理默认或可后置，仅在用户主动提及时记录。
 
@@ -182,10 +182,10 @@ runs/{timestamp}-{model_name}/
 
 ## 5. 与其他 skill 关联
 
-- `classification-model-development` — **上游调用方**：需求澄清 + 落盘 task-spec 后，development 调度 data-cleaning → credit-data-analysis → training
+- `classification-model-development` — **上游调用方**：需求澄清 + 落盘 task-spec 后，development 调度 data-cleaning → credit-data-analysis → experiments
 - `data-cleaning` — **下游**：承接本地样本，完成哨兵值替换 + 用户日期去重 + 派生特征列表
 - `credit-data-analysis` — **下游**：建模 pipeline 特征分析（Stage 0），消费 `feature_config.yaml` 的 `model.split` 推导 PSI 基准月
-- `classification-model-training` — **下游**：按 `model.split` 即时切分训练
+- `classification-model-experiments` — **下游**：按 `model.split` 消费切分训练（主链路）
 
 ## 6. 执行约束
 

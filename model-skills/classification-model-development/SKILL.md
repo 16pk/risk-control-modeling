@@ -1,6 +1,6 @@
 ---
 name: classification-model-development
-description: 模型开发唯一调度者。从需求澄清到收口打分的整个建模主链路都由本 skill 编排：调度 task-spec / feature-classification / data-cleaning / credit-data-analysis / classification-model-training / model-scoring 等 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、session 决议；另提供轻量编排入口 prep_sample.py（clean/analyze），供「只清洗 / 只分析」独立任务直接调度。触发词：开发模型、跑 baseline、调参、多模型对比、列历史 session、建模。
+description: 模型开发唯一调度者。从需求澄清到收口打分的整个建模主链路都由本 skill 编排：调度 task-spec / feature-classification / data-cleaning / credit-data-analysis / classification-model-experiments / model-scoring 等 sub-skill，管理路径接力、决策点询问、report.md 回填、断点续跑、session 决议；另提供轻量编排入口 prep_sample.py（clean/analyze），供「只清洗 / 只分析」独立任务直接调度。触发词：开发模型、跑 baseline、列历史 session、建模。
 ---
 
 # 模型开发总控（classification-model-development）
@@ -16,8 +16,6 @@ description: 模型开发唯一调度者。从需求澄清到收口打分的整�
   → 实验矩阵+对抗验证+规则诊断+Optuna 调优+转正(classification-model-experiments, v2.3 主链路)
   → 收口打分(model-scoring 默认执行)
 ```
-> training / tuning 保留为**备用路径**（仅用户主动要求时走 run_build / run_tuning），
-> 不进入默认编排；comparison 仅在用户主动要求深度对比时触发。
 
 ### 1.1 轻量编排入口（独立任务）
 
@@ -85,9 +83,7 @@ Stage 4: 实验矩阵 (classification-model-experiments, v2.3 主链路默认)
    ↓          → 诊断驱动 Optuna 锚点调整/调优(well_fit 可跳过; 关闭 Optuna 时整段跳过) → top10 转正确认
    ↓ 产 experiments/matrix-plan.json + experiments/{id}/ 各格 + new-models/{algo}-v{N}/ 转正 run
 Stage 5: 迭代决策点 (loop, 可重复 0~N 次, 仅用户主动要求时)
-   ├─ 5a: 继续实验 (新样本/特征方案 或 加大矩阵, 重跑 experiments, 可选)
-   ├─ 5b: 深度对比 (classification-model-comparison, 仅用户主动要求, 可选)
-   └─ 5c: 备用路径 (classification-model-training / tuning, 仅用户明确要求时走 run_build/run_tuning)
+   └─ 继续实验 (新样本/特征方案 或 加大矩阵, 重跑 experiments, 可选)
 Stage 6: 收口 — 回填 report.md, 落 finalized_model.json
 Stage 7: model-scoring (定版模型打分, **默认执行**, 用户可叫停)
    ↓ 产 scoring/score_sample.parquet (支持 experiments 转正的 model.pkl 加载)
@@ -107,16 +103,12 @@ experiments 内部每个确认点(实验范围 / 对抗幅度 / top10 转正)也
 | Stage 2 | task-spec + 用户样本 + `sample-features/feature-list.csv` | `sample-features/data-cleaning/sample.parquet` + `feature-list.csv` | `data-cleaning/scripts/clean_data.py --feature-list-source <session_dir>/sample-features/feature-list.csv` |
 | Stage 3 | `sample.parquet` + `sample-features/feature-list.csv`（权威清单）+ `feature_config.yaml` | `sample-features/credit-data-analysis/{特征分析结果.xlsx, 特征分析结果.md, _manifest.json}` | `credit-data-analysis/scripts/feature_analysis.py --feature-list <session_dir>/sample-features/feature-list.csv --split-config <feature_config.yaml> --base-month <确认的OOT首月>` |
 | Stage 4 | `sample.parquet` + `feature-list.csv` + `feature_config.yaml`（含 `model.split`） | `experiments/matrix-plan.json` + `experiments/{id}/` + `new-models/{algo}-v{N}/` | `classification-model-experiments/scripts/run_experiments.py --session-dir <session_dir> --sample sample-features/data-cleaning/sample.parquet --feature-list sample-features/feature-list.csv --config <feature_config.yaml> --until promote` |
-| Stage 5a | `experiments/matrix-plan.json` + 源格 | `experiments/{新格}/` + `new-models/{新 algo}-v{N}/` | 同上 CLI（新矩阵/新方案重跑, `--resume` 可跳过 done 格） |
-| Stage 5b | `new-models/{run}/model` | `model-comparison/model-comparison_*.json` | `classification-model-comparison/scripts/aggregate_session_comparison.py`（experiments 转正 run 默认不产 eval_single JSON，深度对比需用户主动触发） |
-| Stage 5c | baseline run dir（备用路径） | `new-models/{algo}-tuned-v{N}/` / `{algo}-feat-v{N}/` | `classification-model-training/scripts/run_build.py` / `classification-model-tuning/scripts/run_tuning.py`（仅用户明确要求） |
+| Stage 5 | `experiments/matrix-plan.json` + 源格 | `experiments/{新格}/` + `new-models/{新 algo}-v{N}/` | 同上 CLI（新矩阵/新方案重跑, `--resume` 可跳过 done 格） |
 | Stage 6 | `new-models/{run}/model/model_meta.json` | `finalized_model.json` | `model-scoring/scripts/mark_finalized.py --session-dir <session_dir> --run-name {run}` |
 | Stage 7 | `finalized_model.json` + `sample.parquet` | `scoring/score_sample.parquet` | `model-scoring/scripts/score_data.py --model-path <session_dir>/new-models/{run}/model --data <session_dir>/sample-features/data-cleaning/sample.parquet --out <session_dir>/scoring/score_sample.parquet` |
 
 **切分唯一真相** = `feature_config.yaml` 的 `model.split`（train/test/oot 三档区间）。
 - v2.3 主链路（experiments）：开发池 = train+test 区间合并，每格 seed=42 分层随机 70/30 切 train/val，OOT 纯榜单；**experiments 无独立 test 档（test=实验台 val，回填 report 时注明语义）**。
-- 备用路径（training）：`run_build` 在训练消费时按区间即时切分，不落盘 session 级 `splits/`。
-- 兼容：`train_config.yaml` 的 `model.split` 与 feature_config 保持一致（备用路径用）。
 
 **PSI 基准月确认（Stage 3 门禁）**：编排层读 `--split-config` 的 `model.split.oot_range`，取起始日所在月为默认基准月，向用户确认（"PSI 基准月默认取第一个 OOT 月 `{YYYY-MM}`，是否确认？"），确认后以 `--base-month` 显式传入。
 
@@ -150,10 +142,8 @@ experiments 内部每个确认点(实验范围 / 对抗幅度 / top10 转正)也
 > {run_name} 已落盘(experiments 矩阵转正)。OOT AUC: {oot_auc} / val AUC: {val_auc}（乐观偏差标注见 leaderboard）
 > 下一步?
 >   A. 继续实验 (新样本/特征方案 或 加大矩阵, 重跑 experiments)
->   B. 深度对比 (comparison, 仅当你需要分桶/lift/召回/条件格式对比)
->   C. 停, 进入收口 (Stage 6)
+>   B. 停, 进入收口 (Stage 6)
 ```
-（备用路径：若你明确要求走单模型训练/调参，可改用 training run_build / tuning run_tuning。）
 
 **Stage 7 打分（默认执行）**：
 ```
@@ -199,12 +189,11 @@ python classification-model-development/scripts/fill_report.py \
 
 ## 8. 算法与矩阵
 
-experiments 主链路算法收敛到 **lgb/xgb**（DNN/LR 评分卡已从主链路下线，不默认询问；若用户明确要求 dnn/lr，走备用路径 training run_build）：
+experiments 主链路算法收敛到 **lgb/xgb**（专家包仅支持 lgb/xgb 树模型，不提供 DNN/LR 评分卡）：
 
-1. 矩阵方案（样本×特征正交）由 `plan_matrix` 在 Stage 4 按 feature_config 生成，可经 Stage 5a 加大/替换方案
+1. 矩阵方案（样本×特征正交）由 `plan_matrix` 在 Stage 4 按 feature_config 生成，可经 Stage 5 加大/替换方案
 2. 每算法 OOT AUC 榜首为 winner → 规则诊断 → Optuna 邻域调优(-opt)
 3. 转正 top10 按 leaderboard 排序确认；不同算法 run 布局一致，`config.json.algo` 区分
-4. comparison 深度对比需用户主动触发（experiments 转正 run 默认不产 eval_single JSON）
 
 ## 9. 与其他 skill 的接口
 
@@ -226,5 +215,4 @@ experiments 主链路算法收敛到 **lgb/xgb**（DNN/LR 评分卡已从主链�
 
 - 上游依赖: `classification-model-task-spec` / `feature-classification`（特征列识别，Stage 1）/ `data-cleaning` / `credit-data-analysis`
 - 下游编排(v2.3 主链路): `classification-model-experiments`（矩阵+对抗+诊断+调优+转正）/ `model-scoring`（Stage 7 默认，支持 experiments 转正 pkl 加载）
-- 备用路径(仅用户主动): `classification-model-training` / `classification-model-tuning`（规则诊断已并入 experiments，保留供单模型训练/调参）
-- 可选触发: `classification-model-comparison`（深度对比）/ `score-to-fico` / `credit-model-report` / `classification-model-package`（定版模型 → 独立交付包）/ `model-knowledge`（仅用户主动要求）
+- 可选触发: `score-to-fico` / `credit-model-report` / `classification-model-package`（定版模型 → 独立交付包）/ `model-knowledge`（仅用户主动要求）
